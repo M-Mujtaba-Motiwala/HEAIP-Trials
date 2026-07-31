@@ -1,0 +1,60 @@
+version: '3.8'
+
+# =============================================================================
+# Hamdard AI Platform — Docker Compose Stack
+# Services: Next.js App, PostgreSQL 16, Redis 7
+# =============================================================================
+
+services:
+  # Next.js Enterprise AI Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:hamdard123@postgres:5432/hamdard_ai?schema=public
+      - AUTH_SECRET=hamdard-ai-platform-secret-key-change-in-production
+      - NEXTAUTH_URL=http://localhost:3000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: always
+
+  # PostgreSQL 16 Enterprise Database
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hamdard_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: hamdard123
+      POSTGRES_DB: hamdard_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis 7 Cache & Rate Limiting Engine
+  redis:
+    image: redis:7-alpine
+    container_name: hamdard_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

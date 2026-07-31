@@ -1,0 +1,379 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+model Department {
+  id                 String        @id @default(uuid())
+  /// e.g., EXEC, IT, MKT, FIN, HR, SCM, PROD, QA, RND, SALES
+  code               String        @unique
+  name               String        @unique
+  description        String?
+  /// ACTIVE | INACTIVE
+  status             String        @default("ACTIVE")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  headOfDepartmentId String?
+  headOfDepartment   Employee?     @relation("DepartmentHOD", fields: [headOfDepartmentId], references: [id])
+  employees          Employee[]    @relation("DepartmentEmployees")
+  featureFlags       FeatureFlag[]
+  teams              Team[]
+
+  @@map("departments")
+}
+
+model Team {
+  id           String     @id @default(uuid())
+  name         String
+  departmentId String
+  description  String?
+  /// ACTIVE | INACTIVE
+  status       String     @default("ACTIVE")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  employees    Employee[]
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@index([departmentId])
+  @@map("teams")
+}
+
+model Employee {
+  id                 String                @id @default(uuid())
+  /// Corporate ID (e.g. HAM-001, EXT-101)
+  employeeId         String                @unique
+  name               String
+  email              String                @unique
+  /// bcrypt-hashed password
+  password           String
+  /// Department name for quick display/backwards compatibility
+  department         String
+  /// FK to Department model
+  departmentId       String?
+  /// FK to Team model
+  teamId             String?
+  designation        String
+  /// Primary role code for quick lookup
+  role               String                @default("EMPLOYEE")
+  /// EMPLOYEE | THIRD_PARTY | GUEST
+  userType           String                @default("EMPLOYEE")
+  /// PENDING | APPROVED | REJECTED (for admin approval workflow)
+  registrationStatus String                @default("APPROVED")
+  isActive           Boolean               @default(true)
+  avatarUrl          String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  policiesCreated    AiPolicy[]
+  auditLogs          AuditLog[]
+  chatSessions       ChatSession[]
+  delegatedBy        DelegatedAssignment[] @relation("Delegator")
+  delegatedTo        DelegatedAssignment[] @relation("TargetUser")
+  hodOfDepartments   Department[]          @relation("DepartmentHOD")
+  deptRel            Department?           @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  teamRel            Team?                 @relation(fields: [teamId], references: [id])
+  usageLogs          UsageLog[]
+  assignedRoles      UserRole[]            @relation("RoleAssigner")
+  userRoles          UserRole[]            @relation("UserRoles")
+  uploadedAttachments ChatAttachment[]     @relation("AttachmentUploader")
+
+  @@index([department])
+  @@index([departmentId])
+  @@index([role])
+  @@index([isActive])
+  @@index([registrationStatus])
+  @@map("employees")
+}
+
+model EmployeeMaster {
+  id           String   @id @default(uuid())
+  employeeId   String   @unique
+  companyEmail String   @unique
+  name         String
+  department   String
+  designation  String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([employeeId, companyEmail])
+  @@map("employee_master")
+}
+
+model Role {
+  id                    String                @id @default(uuid())
+  /// SUPER_ADMIN | ADMIN | DEPT_MANAGER | EMPLOYEE | CONTRACTOR | GUEST
+  code                  String                @unique
+  name                  String                @unique
+  description           String?
+  parentRoleId          String?
+  delegationLevel       Int                   @default(0)
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  delegatedAssignments  DelegatedAssignment[]
+  maxDelegationPolicies DelegationPolicy[]    @relation("MaxAssignableRole")
+  delegationPolicies    DelegationPolicy[]    @relation("SourceRole")
+  featureFlags          FeatureFlag[]
+  roleModules           RoleModule[]
+  permissions           RolePermission[]
+  parentRole            Role?                 @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
+  childRoles            Role[]                @relation("RoleHierarchy")
+  userRoles             UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id              String           @id @default(uuid())
+  /// e.g., users, chat, admin, reports, policies
+  module          String
+  /// e.g., employee, session, policy
+  resource        String
+  /// e.g., create, read, update, delete, approve, reject
+  action          String
+  /// e.g., users.employee.create, registration.approve
+  permissionKey   String           @unique
+  description     String?
+  createdAt       DateTime         @default(now())
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@index([resource])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  assignedAt   DateTime   @default(now())
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id           String    @id @default(uuid())
+  userId       String
+  roleId       String
+  assignedById String?
+  assignedAt   DateTime  @default(now())
+  assignedBy   Employee? @relation("RoleAssigner", fields: [assignedById], references: [id])
+  role         Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user         Employee  @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model DelegationPolicy {
+  id                  String   @id @default(uuid())
+  roleId              String
+  maxAssignableRoleId String
+  /// DEPARTMENT | GLOBAL
+  scope               String   @default("DEPARTMENT")
+  canDelegate         Boolean  @default(true)
+  maxDepth            Int      @default(1)
+  createdAt           DateTime @default(now())
+  maxAssignableRole   Role     @relation("MaxAssignableRole", fields: [maxAssignableRoleId], references: [id], onDelete: Cascade)
+  role                Role     @relation("SourceRole", fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@map("delegation_policies")
+}
+
+model DelegatedAssignment {
+  id             String    @id @default(uuid())
+  delegatorId    String
+  targetUserId   String
+  assignedRoleId String
+  startDate      DateTime  @default(now())
+  endDate        DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  assignedRole   Role      @relation(fields: [assignedRoleId], references: [id], onDelete: Cascade)
+  delegator      Employee  @relation("Delegator", fields: [delegatorId], references: [id], onDelete: Cascade)
+  targetUser     Employee  @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@map("delegated_assignments")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  /// SECURITY | AI | SYSTEM | AUTH
+  category  String
+  key       String   @unique
+  /// Serialised JSON or string value
+  value     String
+  version   Int      @default(1)
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model FeatureFlag {
+  id           String      @id @default(uuid())
+  featureName  String      @unique
+  enabled      Boolean     @default(false)
+  departmentId String?
+  roleId       String?
+  createdAt    DateTime    @default(now())
+  department   Department? @relation(fields: [departmentId], references: [id])
+  role         Role?       @relation(fields: [roleId], references: [id])
+
+  @@map("feature_flags")
+}
+
+model UiModule {
+  id          String       @id @default(uuid())
+  moduleName  String
+  route       String       @unique
+  icon        String
+  orderIndex  Int          @default(0)
+  enabled     Boolean      @default(true)
+  roleModules RoleModule[]
+
+  @@map("ui_modules")
+}
+
+model RoleModule {
+  roleId   String
+  moduleId String
+  module   UiModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  role     Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, moduleId])
+  @@map("role_modules")
+}
+
+model ChatSession {
+  id         String    @id @default(uuid())
+  employeeId String
+  title      String    @default("New Chat")
+  /// openai | gemini | anthropic
+  aiProvider String    @default("gemini")
+  aiModel    String    @default("gemini-2.0-flash")
+  isArchived Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  messages   Message[]
+  attachments ChatAttachment[]
+
+  @@index([employeeId])
+  @@index([createdAt])
+  @@index([isArchived])
+  @@map("chat_sessions")
+}
+
+model Message {
+  id         String      @id @default(uuid())
+  sessionId  String
+  /// user | assistant | system
+  role       String
+  content    String
+  tokensUsed Int         @default(0)
+  costUsd    Float       @default(0)
+  createdAt  DateTime    @default(now())
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  attachments ChatAttachment[]
+
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+model ChatAttachment {
+  id           String      @id @default(uuid())
+  sessionId    String
+  messageId    String?
+  uploadedById String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String      @unique
+  createdAt    DateTime    @default(now())
+  session      ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  message      Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  uploadedBy   Employee    @relation("AttachmentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([messageId])
+  @@map("chat_attachments")
+}
+
+model AiModel {
+  id           String   @id @default(uuid())
+  provider     String
+  modelId      String
+  displayName  String
+  enabled      Boolean  @default(true)
+  isDefault    Boolean  @default(false)
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([provider, modelId])
+  @@index([enabled, isDefault])
+  @@map("ai_models")
+}
+
+model UsageLog {
+  id           String   @id @default(uuid())
+  employeeId   String
+  aiProvider   String
+  aiModel      String
+  tokensInput  Int
+  tokensOutput Int
+  costUsd      Float
+  department   String
+  createdAt    DateTime @default(now())
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([department])
+  @@index([createdAt])
+  @@index([aiProvider])
+  @@map("usage_logs")
+}
+
+model AiPolicy {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  /// RATE_LIMIT | CONTENT_FILTER | MODEL_ACCESS | DATA_FILTER
+  policyType  String
+  /// Serialised JSON
+  configJson  String
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  createdBy   Employee @relation(fields: [createdById], references: [id])
+
+  @@index([policyType])
+  @@index([isActive])
+  @@map("ai_policies")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String
+  action    String
+  resource  String
+  /// Serialised JSON payload
+  details   String
+  ipAddress String?
+  createdAt DateTime @default(now())
+  actor     Employee @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
