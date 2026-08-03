@@ -43,27 +43,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const aiModelDelegate = (db as any).aiModel || (db as any).ai_model;
     let provider = "gemini";
     let selectedModel = model || "gemini-2.0-flash";
 
-    if (aiModelDelegate) {
-      try {
-        const registryModel = model
-          ? await aiModelDelegate.findFirst({ where: { modelId: model, enabled: true } })
-          : await aiModelDelegate.findFirst({ where: { enabled: true, isDefault: true } }) || await aiModelDelegate.findFirst({ where: { enabled: true }, orderBy: { createdAt: "asc" } });
+    try {
+      const registryModel = model
+        ? await db.aiModel.findFirst({ where: { modelId: model, enabled: true } })
+        : await db.aiModel.findFirst({ where: { enabled: true, isDefault: true } })
+          ?? await db.aiModel.findFirst({ where: { enabled: true }, orderBy: { createdAt: "asc" } });
 
-        if (registryModel) {
-          provider = registryModel.provider;
-          selectedModel = registryModel.modelId;
-        } else {
-          provider = getProvider(selectedModel);
-        }
-      } catch (err) {
-        console.warn("AiModel lookup fallback triggered:", err);
+      if (registryModel) {
+        provider = registryModel.provider;
+        selectedModel = registryModel.modelId;
+      } else {
         provider = getProvider(selectedModel);
       }
-    } else {
+    } catch (err) {
+      console.warn("AiModel lookup fallback triggered:", err);
       provider = getProvider(selectedModel);
     }
 

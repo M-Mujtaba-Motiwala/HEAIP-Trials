@@ -1,7 +1,8 @@
 // =============================================================================
 // Chat Sidebar — Client component for chat navigation
 // Features: collapsible, mobile auto-collapse, search, active session state,
-//           three-dot overflow menu (Rename, Archive, Delete), optimistic UI, undo toast
+//           three-dot overflow menu (Rename, Archive, Delete), optimistic UI,
+//           undo toast, Archive nav button + badge, Floating ArchivePanel
 // =============================================================================
 
 "use client";
@@ -22,10 +23,16 @@ import {
   Trash2,
   RotateCcw,
   Check,
+  ArchiveRestore,
 } from "lucide-react";
 import Link from "next/link";
 import styles from "./chat.module.css";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import ArchivePanel, { ArchivedSession } from "./ArchivePanel";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface ChatSession {
   id: string;
@@ -44,9 +51,14 @@ interface ChatSidebarProps {
   chatSessions: ChatSession[];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ConversationRow — individual chat item with three-dot overflow menu
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ConversationRow({
   session,
   isActive,
+  isArchivingOut,
   onRename,
   onArchive,
   onDelete,
@@ -57,6 +69,7 @@ function ConversationRow({
 }: {
   session: ChatSession;
   isActive: boolean;
+  isArchivingOut: boolean;
   onRename: (session: ChatSession, newTitle: string) => void;
   onArchive: (session: ChatSession) => void;
   onDelete: (session: ChatSession) => void;
@@ -110,7 +123,7 @@ function ConversationRow({
   }
 
   return (
-    <div className={styles.chatItemWrapper}>
+    <div className={`${styles.chatItemWrapper} ${isArchivingOut ? styles.archivingOut : ""}`}>
       <Link
         href={`/chat/${session.id}`}
         className={`${styles.chatItem} ${isActive ? styles.active : ""}`}
@@ -180,6 +193,10 @@ function ConversationRow({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ChatSidebar — Main export
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -198,6 +215,14 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [sessions, setSessions] = useState(chatSessions);
 
+  // ── Archive Panel state ───────────────────────────────────────────────────
+  const [isArchivePanelOpen, setIsArchivePanelOpen] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [isArchiveLoading, setIsArchiveLoading] = useState(false);
+  // Track IDs currently animating out
+  const [archivingOutIds, setArchivingOutIds] = useState<Set<string>>(new Set());
+
   // ── Menu & Undo Toast State ─────────────────────────────────────────────
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -207,6 +232,41 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
     session: ChatSession;
     timer: NodeJS.Timeout;
   } | null>(null);
+
+  // ── Fetch archived sessions ───────────────────────────────────────────────
+  const fetchArchivedSessions = useCallback(async () => {
+    setIsArchiveLoading(true);
+    try {
+      const res = await fetch("/api/chat/sessions/archived", { cache: "no-store" });
+      if (!res.ok) return;
+      const payload: { data?: ArchivedSession[]; count?: number } = await res.json();
+      if (payload.data) {
+        setArchivedSessions(payload.data);
+        setArchivedCount(payload.count ?? payload.data.length);
+      }
+    } catch {
+      // keep existing state visible if fetch fails
+    } finally {
+      setIsArchiveLoading(false);
+    }
+  }, []);
+
+  // Fetch archive count on mount (for badge)
+  useEffect(() => {
+    void fetchArchivedSessions();
+  }, [fetchArchivedSessions]);
+
+  // Also re-fetch when panel is opened
+  useEffect(() => {
+    if (isArchivePanelOpen) {
+      void fetchArchivedSessions();
+    }
+  }, [isArchivePanelOpen, fetchArchivedSessions]);
+
+  // ── Toggle archive panel ──────────────────────────────────────────────────
+  const toggleArchivePanel = useCallback(() => {
+    setIsArchivePanelOpen((prev) => !prev);
+  }, []);
 
   // Close open dropdown menu when clicking outside
   useEffect(() => {
@@ -326,15 +386,15 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
     }
   };
 
-  const executeArchive = async (session: ChatSession) => {
+  const executeArchive = async (session: ChatSession, shouldArchive: boolean) => {
     try {
       await fetch(`/api/chat/sessions/${session.id}/archive`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isArchived: true }),
+        body: JSON.stringify({ isArchived: shouldArchive }),
       });
     } catch (err) {
-      console.error("Failed to archive session:", err);
+      console.error("Failed to archive/unarchive session:", err);
     }
   };
 
@@ -351,14 +411,34 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
   const handleArchive = (session: ChatSession) => {
     if (toast) clearTimeout(toast.timer);
 
-    setSessions((prev) => prev.filter((s) => s.id !== session.id));
+    // Trigger slide-out animation
+    setArchivingOutIds((prev) => new Set(prev).add(session.id));
+
+    // Remove from active list after animation completes
+    setTimeout(() => {
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
+      setArchivingOutIds((prev) => {
+        const next = new Set(prev);
+        next.delete(session.id);
+        return next;
+      });
+    }, 300);
+
+    // Optimistically update archive state
+    const archived: ArchivedSession = {
+      id: session.id,
+      title: session.title,
+      updatedAt: session.updatedAt,
+    };
+    setArchivedSessions((prev) => [archived, ...prev]);
+    setArchivedCount((prev) => prev + 1);
 
     if (isActiveSession(session.id)) {
       router.push("/chat");
     }
 
     const timer = setTimeout(() => {
-      void executeArchive(session);
+      void executeArchive(session, true);
       setToast(null);
     }, 5000);
 
@@ -395,9 +475,44 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
   const handleUndo = () => {
     if (!toast) return;
     clearTimeout(toast.timer);
-    setSessions((prev) => [toast.session, ...prev]);
+
+    if (toast.action === "archive") {
+      // Undo archive: restore to active list & remove from archived
+      setSessions((prev) => [toast.session, ...prev]);
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== toast.session.id));
+      setArchivedCount((prev) => Math.max(0, prev - 1));
+    } else {
+      // Undo delete: restore to active list
+      setSessions((prev) => [toast.session, ...prev]);
+    }
+
     setToast(null);
   };
+
+  // ── Unarchive handler (called from ArchivePanel) ──────────────────────────
+  const handleUnarchive = useCallback(
+    async (session: ArchivedSession) => {
+      // Optimistic: remove from archived panel immediately
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id));
+      setArchivedCount((prev) => Math.max(0, prev - 1));
+
+      // Optimistic: add back to active sessions list at the top
+      setSessions((prev) => [
+        { id: session.id, title: session.title, updatedAt: session.updatedAt },
+        ...prev,
+      ]);
+
+      try {
+        await executeArchive(session, false);
+      } catch {
+        // Roll back on failure
+        setArchivedSessions((prev) => [session, ...prev]);
+        setArchivedCount((prev) => prev + 1);
+        setSessions((prev) => prev.filter((s) => s.id !== session.id));
+      }
+    },
+    [] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   return (
     <aside className={`${styles.sidebar} ${isCollapsed ? styles.collapsed : ""}`}>
@@ -433,6 +548,26 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
         >
           <Plus size={18} />
           {!isCollapsed && <span>New Chat</span>}
+        </button>
+      </div>
+
+      {/* ── [1] Archive Nav Button ──────────────────────────────────────────── */}
+      <div style={{ paddingTop: "var(--space-xs)" }}>
+        <button
+          type="button"
+          className={`${styles.archiveNavButton} ${isArchivePanelOpen ? styles.active : ""}`}
+          onClick={toggleArchivePanel}
+          aria-label="Toggle archive panel"
+          aria-expanded={isArchivePanelOpen}
+          title="Archived conversations"
+        >
+          <ArchiveRestore size={16} />
+          {!isCollapsed && <span>Archive</span>}
+          {archivedCount > 0 && (
+            <span className={styles.archiveBadge} aria-label={`${archivedCount} archived chats`}>
+              {archivedCount > 99 ? "99+" : archivedCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -484,6 +619,7 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
                         key={session.id}
                         session={session}
                         isActive={isActiveSession(session.id)}
+                        isArchivingOut={archivingOutIds.has(session.id)}
                         onRename={handleRename}
                         onArchive={handleArchive}
                         onDelete={handleDelete}
@@ -506,6 +642,7 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
                             key={session.id}
                             session={session}
                             isActive={isActiveSession(session.id)}
+                            isArchivingOut={archivingOutIds.has(session.id)}
                             onRename={handleRename}
                             onArchive={handleArchive}
                             onDelete={handleDelete}
@@ -526,6 +663,7 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
                             key={session.id}
                             session={session}
                             isActive={isActiveSession(session.id)}
+                            isArchivingOut={archivingOutIds.has(session.id)}
                             onRename={handleRename}
                             onArchive={handleArchive}
                             onDelete={handleDelete}
@@ -546,6 +684,7 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
                             key={session.id}
                             session={session}
                             isActive={isActiveSession(session.id)}
+                            isArchivingOut={archivingOutIds.has(session.id)}
                             onRename={handleRename}
                             onArchive={handleArchive}
                             onDelete={handleDelete}
@@ -566,6 +705,7 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
                             key={session.id}
                             session={session}
                             isActive={isActiveSession(session.id)}
+                            isArchivingOut={archivingOutIds.has(session.id)}
                             onRename={handleRename}
                             onArchive={handleArchive}
                             onDelete={handleDelete}
@@ -657,6 +797,15 @@ export default function ChatSidebar({ user, chatSessions }: ChatSidebarProps) {
           <LogOut size={18} />
         </button>
       </div>
+
+      {/* ── [3] Floating Archive Panel ─────────────────────────────────────── */}
+      <ArchivePanel
+        isOpen={isArchivePanelOpen}
+        onClose={() => setIsArchivePanelOpen(false)}
+        archivedSessions={archivedSessions}
+        isLoading={isArchiveLoading}
+        onUnarchive={handleUnarchive}
+      />
     </aside>
   );
 }

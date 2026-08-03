@@ -1,8 +1,12 @@
 // =============================================================================
 // Prisma Client Singleton — Hamdard AI Platform (Prisma v7)
 // -----------------------------------------------------------------------------
-// Uses PrismaBetterSqlite3 adapter for zero-config dev & edge build capability.
-// Production deployment utilizes Docker Compose with PostgreSQL 16.
+// Prisma v7 with a driver adapter MUST always receive the adapter at
+// construction time. A plain `new PrismaClient()` (without options) will
+// throw at startup when previewFeatures or driver-adapter mode is active.
+//
+// This singleton always constructs the client with PrismaPg so that all
+// model delegates (including `aiModel`) are available at runtime.
 // =============================================================================
 
 import { PrismaClient } from "@prisma/client";
@@ -14,19 +18,18 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient(): PrismaClient {
-  try {
-    if (process.env.DATABASE_URL) {
-      const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-      const adapter = new PrismaPg(pool);
-      const client = new PrismaClient({ adapter });
-      if ((client as any).chatSession && (client as any).employee) {
-        return client;
-      }
-    }
-  } catch (err) {
-    console.warn("PrismaPg adapter initialization warning:", err);
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL environment variable is not set. " +
+        "Add it to your .env.local file before starting the server."
+    );
   }
-  return new PrismaClient();
+  const pool = new Pool({ connectionString: url });
+  const adapter = new PrismaPg(pool);
+  // Cast needed because Prisma v7 types `adapter` as the internal
+  // DriverAdapter interface, but the public PrismaPg class satisfies it.
+  return new PrismaClient({ adapter } as any);
 }
 
 export const db: PrismaClient =

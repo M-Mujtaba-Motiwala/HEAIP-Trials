@@ -524,3 +524,256 @@
   from { transform: translateY(10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+
+/* ── Archive Nav Button ───────────────────────────────────────────────── */
+.archiveNavButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: calc(100% - 16px);
+  margin: 0 var(--space-sm) var(--space-xs);
+  padding: 8px 12px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  position: relative;
+  text-align: left;
+}
+
+.archiveNavButton:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.archiveNavButton.active {
+  background: rgba(46, 125, 50, 0.1);
+  color: var(--brand-secondary);
+  border-color: rgba(46, 125, 50, 0.2);
+}
+
+/* ── Archive Badge ────────────────────────────────────────────────────── */
+.archiveBadge {
+  margin-left: auto;
+  background: var(--brand-secondary);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  min-width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* ── Floating Archive Panel ───────────────────────────────────────────── */
+.archivePanel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 320px;
+  max-height: 480px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl), 0 0 0 1px rgba(46, 125, 50, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 500;
+  /* transition handles open/close */
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.archivePanelOpen {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}
+
+.archivePanelClosed {
+  opacity: 0;
+  transform: translateY(18px);
+  pointer-events: none;
+}
+
+/* ── Panel Header ─────────────────────────────────────────────────────── */
+.archivePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.archivePanelTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.archivePanelCount {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+}
+
+.archivePanelClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.archivePanelClose:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Panel Body + List ────────────────────────────────────────────────── */
+.archivePanelBody {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.archivePanelList {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Archived Item ────────────────────────────────────────────────────── */
+.archivedItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), opacity 0.25s ease, transform 0.25s ease, max-height 0.3s ease;
+}
+
+.archivedItem:hover {
+  background: var(--bg-hover);
+}
+
+.archivedItemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.archivedItemTitle {
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archivedItemDate {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+/* ── Unarchive Button ─────────────────────────────────────────────────── */
+.unarchiveButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  background: rgba(46, 125, 50, 0.08);
+  border: 1px solid rgba(46, 125, 50, 0.2);
+  border-radius: var(--radius-sm);
+  color: var(--brand-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.unarchiveButton:hover {
+  background: var(--brand-secondary);
+  color: white;
+  border-color: var(--brand-secondary);
+  transform: scale(1.04);
+}
+
+/* ── Empty / Loading State ────────────────────────────────────────────── */
+.archivePanelEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 20px;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+}
+
+.archivePanelEmpty p {
+  margin: 0;
+}
+
+.archivePanelEmptyIcon {
+  opacity: 0.25;
+  color: var(--text-secondary);
+}
+
+/* ── Spinner ──────────────────────────────────────────────────────────── */
+.archiveSpinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-subtle);
+  border-top-color: var(--brand-secondary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Chat item slide-out (archive action) ─────────────────────────────── */
+@keyframes archiveSlideOut {
+  0%   { opacity: 1; transform: translateX(0);   max-height: 60px; }
+  60%  { opacity: 0; transform: translateX(-12px); }
+  100% { opacity: 0; transform: translateX(-12px); max-height: 0; padding: 0; margin: 0; }
+}
+
+.archivingOut {
+  animation: archiveSlideOut 0.3s ease forwards;
+  overflow: hidden;
+}
