@@ -1,11 +1,7 @@
-// =============================================================================
-// Root Layout — Hamdard AI Platform
-// The top-level layout wrapping every page with fonts, metadata, and providers
-// =============================================================================
-
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import SessionProvider from "@/components/providers/SessionProvider";
+import ThemeProvider from "@/components/providers/ThemeProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -31,9 +27,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${inter.className}`}>
-        <SessionProvider>{children}</SessionProvider>
+        <ThemeProvider>
+          <SessionProvider>{children}</SessionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

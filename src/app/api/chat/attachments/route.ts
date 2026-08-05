@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { hasAnyPermission } from "@/lib/permissions";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(["text/plain", "text/csv", "application/pdf", "application/json", "image/png", "image/jpeg", "image/webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]);
@@ -11,6 +12,9 @@ const ALLOWED_MIME_TYPES = new Set(["text/plain", "text/csv", "application/pdf",
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!(await hasAnyPermission(session.user.id, ["chat.upload.document", "chat.session.create"]))) {
+    return NextResponse.json({ error: "Forbidden: You do not have permission to upload documents" }, { status: 403 });
+  }
   try {
     const formData = await request.formData();
     const sessionId = formData.get("sessionId");

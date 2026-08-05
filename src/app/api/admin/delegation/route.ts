@@ -2,7 +2,6 @@
 // Delegation API — List, Create, Revoke delegated role assignments
 // =============================================================================
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/api-guard";
 import { delegateRole, revokeDelegation, getActiveDelegations } from "@/lib/delegation";
 

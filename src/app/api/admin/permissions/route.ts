@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { hasPermission } from '@/lib/permissions';
 
-export async function GET(_request: Request) {
+export async function GET() {
   try {
     const session = await auth();
     if (!session?.user?.id) {

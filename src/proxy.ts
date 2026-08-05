@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 const { auth } = NextAuth(authConfig);
 
 // Routes that don't require authentication
-const publicRoutes = ["/login", "/register", "/api/auth"];
+const publicRoutes = ["/login", "/api/auth"];
 
 // Routes that require administrative authorization
 const adminRoutes = ["/admin"];

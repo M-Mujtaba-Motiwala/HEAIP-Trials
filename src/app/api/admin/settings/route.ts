@@ -20,7 +20,7 @@ export async function GET() {
     });
 
     return NextResponse.json({ settings });
-  } catch (error: unknown) {
+  } catch {
     return NextResponse.json({ error: "Failed to fetch settings" }, { status: 500 });
   }
 }
@@ -60,7 +60,7 @@ export async function PUT(req: Request) {
     });
 
     return NextResponse.json({ setting });
-  } catch (error: unknown) {
+  } catch {
     return NextResponse.json({ error: "Failed to update setting" }, { status: 500 });
   }
 }

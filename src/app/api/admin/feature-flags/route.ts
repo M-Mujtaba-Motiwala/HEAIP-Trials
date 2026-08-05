@@ -23,7 +23,7 @@ export async function GET() {
     });
 
     return NextResponse.json({ featureFlags });
-  } catch (error: unknown) {
+  } catch {
     return NextResponse.json({ error: "Failed to fetch feature flags" }, { status: 500 });
   }
 }
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ flag });
-  } catch (error: unknown) {
+  } catch {
     return NextResponse.json({ error: "Failed to update feature flag" }, { status: 500 });
   }
 }

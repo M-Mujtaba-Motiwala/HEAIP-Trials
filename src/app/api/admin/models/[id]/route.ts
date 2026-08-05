@@ -6,12 +6,12 @@ import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/api-guard";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission("admin.dashboard.view");
+  const guard = await requirePermission("models.manage");
   if ("error" in guard) return guard.error;
   const { id } = await params;
   try {
     const body = await req.json();
-    const { provider, modelId, displayName, enabled, isDefault, metadataJson } = body;
+    const { provider, modelId, displayName, enabled, isDefault, metadataJson, inputCostPer1K, outputCostPer1K } = body;
     const existing = await db.aiModel.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Model not found." }, { status: 404 });
     if (isDefault && (provider ?? existing.provider)) {
@@ -19,6 +19,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         where: { provider: provider ?? existing.provider, isDefault: true, NOT: { id } },
         data: { isDefault: false },
       });
+    }
+    let nextMetadataJson: string | undefined;
+    if (metadataJson !== undefined) {
+      nextMetadataJson = JSON.stringify(metadataJson);
+    } else if (inputCostPer1K !== undefined || outputCostPer1K !== undefined) {
+      let meta: Record<string, unknown> = {};
+      if (existing.metadataJson) {
+        try { meta = JSON.parse(existing.metadataJson); } catch { meta = {}; }
+      }
+      if (inputCostPer1K !== undefined) meta.inputCostPer1K = inputCostPer1K;
+      if (outputCostPer1K !== undefined) meta.outputCostPer1K = outputCostPer1K;
+      nextMetadataJson = JSON.stringify(meta);
     }
     const model = await db.aiModel.update({
       where: { id },
@@ -28,7 +40,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...(displayName !== undefined && { displayName }),
         ...(enabled !== undefined && { enabled }),
         ...(isDefault !== undefined && { isDefault }),
-        ...(metadataJson !== undefined && { metadataJson: JSON.stringify(metadataJson) }),
+        ...(nextMetadataJson !== undefined && { metadataJson: nextMetadataJson }),
       },
     });
     await db.auditLog.create({ data: { actorId: guard.session.user.id, action: "UPDATE_AI_MODEL", resource: `aiModel:${id}`, details: JSON.stringify(body) } });
@@ -40,7 +52,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission("admin.dashboard.view");
+  const guard = await requirePermission("models.manage");
   if ("error" in guard) return guard.error;
   const { id } = await params;
   try {

@@ -29,7 +29,7 @@ function createPrismaClient(): PrismaClient {
   const adapter = new PrismaPg(pool);
   // Cast needed because Prisma v7 types `adapter` as the internal
   // DriverAdapter interface, but the public PrismaPg class satisfies it.
-  return new PrismaClient({ adapter } as any);
+  return new PrismaClient({ adapter } as unknown as ConstructorParameters<typeof PrismaClient>[0]);
 }
 
 export const db: PrismaClient =
