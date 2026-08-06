@@ -6,7 +6,7 @@ import {
   Menu, X, Plus, ChevronDown, Settings, LogOut, Archive,
   Upload, Image as ImageIcon, Video, Send, Bot,
   AlertTriangle, CheckCircle, Clock, Sparkles, Paperclip,
-  MoreVertical, Pencil, Trash2, FileDown,
+  MoreVertical, Pencil, Trash2, FileDown, Copy, RotateCcw, Loader2, Square,
 } from "lucide-react";
 import { HamdardLogo } from "@/components/HamdardLogo";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -48,13 +48,25 @@ interface AvailableModel {
   id: string;
   label: string;
   provider: string;
+  category?: string;
+  description?: string;
+  isDefault?: boolean;
+  capabilities?: Record<string, boolean>;
+  healthStatus?: string;
+  hasCredential?: boolean;
+}
+
+interface ArchivedSession {
+  id: string;
+  title: string;
+  updatedAt: string;
 }
 
 const FALLBACK_MODELS: AvailableModel[] = [
-  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", provider: "Groq" },
-  { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", provider: "Groq" },
-  { id: "gemma2-9b-it", label: "Gemma 2 9B", provider: "Groq" },
-  { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B", provider: "Groq" },
+  { id: "gpt-4o", label: "GPT-4o", provider: "Openai" },
+  { id: "gpt-4o-mini", label: "GPT-4o Mini", provider: "Openai" },
+  { id: "gpt-4-turbo", label: "GPT-4 Turbo", provider: "Openai" },
+  { id: "gpt-3.5-turbo", label: "GPT-3.5 Turbo", provider: "Openai" },
 ];
 
 const PROMPT_SUGGESTIONS = [
@@ -84,6 +96,11 @@ export default function ChatPage() {
   const complianceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [uploadState, setUploadState] = useState<{ status: "idle" | "uploading" | "done" | "error"; message?: string }>({ status: "idle" });
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>(FALLBACK_MODELS);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelHoverIdx, setModelHoverIdx] = useState(-1);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
   const [imageModalOpen, setImageModalOpen] = useState(false);
   const [imagePrompt, setImagePrompt] = useState("");
@@ -100,6 +117,18 @@ export default function ChatPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
+
+  const [isStopping, setIsStopping] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const [messageActions, setMessageActions] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
 
   const isAdmin = session?.user?.role === "SUPER_ADMIN" || session?.user?.role === "ADMIN" || session?.user?.role === "DEPT_MANAGER";
 
@@ -120,9 +149,11 @@ export default function ChatPage() {
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data.data) && data.data.length > 0) {
-          const models: AvailableModel[] = data.data.map((m: { provider: string; modelId: string; displayName: string }) => ({
-            id: m.modelId, label: m.displayName,
+          const models: AvailableModel[] = data.data.map((m: { provider: string; id: string; label: string; category?: string; description?: string; isDefault?: boolean; capabilities?: Record<string, boolean>; healthStatus?: string; hasCredential?: boolean }) => ({
+            id: m.id, label: m.label,
             provider: m.provider.charAt(0).toUpperCase() + m.provider.slice(1),
+            category: m.category, description: m.description, isDefault: m.isDefault,
+            capabilities: m.capabilities, healthStatus: m.healthStatus, hasCredential: m.hasCredential,
           }));
           setAvailableModels(models);
           setSelectedModel((prev) => models.some((m) => m.id === prev) ? prev : (models[0]?.id ?? prev));
@@ -131,6 +162,21 @@ export default function ChatPage() {
       .catch(() => {});
     return () => ac.abort();
   }, []);
+
+  useEffect(() => {
+    try { const saved = localStorage.getItem("favoriteModels"); if (saved) setFavoriteModels(JSON.parse(saved)); } catch { /* */ }
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) setModelDropdownOpen(false);
+    };
+    if (modelDropdownOpen) { document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }
+  }, [modelDropdownOpen]);
+
+  useEffect(() => {
+    if (modelDropdownOpen && modelSearchRef.current) modelSearchRef.current.focus();
+  }, [modelDropdownOpen]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -181,10 +227,13 @@ export default function ChatPage() {
     const sentText = inputValue; setInputValue(""); setIsLoading(true); setCompliance(null);
     const assistantId = `assistant-${Date.now()}`;
     setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", timestamp: new Date(), isStreaming: true }]);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     try {
       const res = await fetch("/api/chat/stream", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: sentText, model: selectedModel, sessionId: currentSessionId, attachmentIds: sentAttachmentIds, history: messages.map((m) => ({ role: m.role, content: m.content })) }),
+        signal: abortController.signal,
       });
       if (!res.ok) { const errBody = await res.json().catch(() => null); throw new Error(errBody?.reason || errBody?.error || "Failed to get response"); }
       const newSessionId = res.headers.get("x-session-id");
@@ -196,9 +245,16 @@ export default function ChatPage() {
       if (reader) { while (true) { const { done, value } = await reader.read(); if (done) break; fullText += decoder.decode(value, { stream: true }).replace(/__metadata:.*?__\n?/g, ""); setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: fullText, isStreaming: true } : m)); } }
       setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: fullText, isStreaming: false } : m));
     } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : "";
-      setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: reason ? `⚠️ ${reason}` : "An error occurred.", isStreaming: false } : m));
-    } finally { setIsLoading(false); }
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setMessages((prev) => {
+          const msg = prev.find((m) => m.id === assistantId);
+          return prev.map((m) => m.id === assistantId ? { ...m, content: msg?.content || "Response stopped.", isStreaming: false } : m);
+        });
+      } else {
+        const reason = err instanceof Error ? err.message : "";
+        setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: reason ? `⚠️ ${reason}` : "An error occurred.", isStreaming: false } : m));
+      }
+    } finally { setIsLoading(false); abortControllerRef.current = null; }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
@@ -313,8 +369,16 @@ export default function ChatPage() {
     closeContextMenu();
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}/messages`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.error || "Failed to fetch messages");
+      }
       const data = await res.json();
       const chatMessages: Array<{ role: string; content: string; createdAt: string }> = data.data || [];
+      if (chatMessages.length === 0) {
+        setSessionError("No messages to export"); setTimeout(() => setSessionError(null), 3000);
+        return;
+      }
       const lines = chatMessages.map((m) => {
         const role = m.role === "user" ? "You" : "AI";
         const time = new Date(m.createdAt).toLocaleString();
@@ -330,11 +394,113 @@ export default function ChatPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch {}
+    } catch (err) {
+      setSessionError(err instanceof Error ? err.message : "Export failed"); setTimeout(() => setSessionError(null), 3000);
+    }
   };
 
   const selectedModelLabel = availableModels.find((m) => m.id === selectedModel)?.label || selectedModel;
+
+  const toggleFavorite = (id: string) => {
+    setFavoriteModels(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      localStorage.setItem("favoriteModels", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const validModels = availableModels.filter((m): m is AvailableModel => !!m?.id);
+  const sortedModels = [...validModels].sort((a, b) => {
+    const aFav = favoriteModels.includes(a.id) ? 0 : 1;
+    const bFav = favoriteModels.includes(b.id) ? 0 : 1;
+    if (aFav !== bFav) return aFav - bFav;
+    if (a.isDefault && !b.isDefault) return -1;
+    if (!a.isDefault && b.isDefault) return 1;
+    return (a.label || a.id).localeCompare(b.label || b.id);
+  });
+
+  const filteredModels = modelSearch.trim()
+    ? sortedModels.filter(m =>
+        (m.label || m.id).toLowerCase().includes(modelSearch.toLowerCase()) ||
+        (m.provider || "").toLowerCase().includes(modelSearch.toLowerCase()) ||
+        (m.category || "").toLowerCase().includes(modelSearch.toLowerCase()) ||
+        m.id.toLowerCase().includes(modelSearch.toLowerCase())
+      )
+    : sortedModels;
+
+  const groupedByProvider = filteredModels.reduce<Record<string, AvailableModel[]>>((acc, m) => {
+    (acc[m.provider] = acc[m.provider] || []).push(m);
+    return acc;
+  }, {});
   const formatBytes = (bytes?: number) => { if (!bytes || bytes <= 0) return ""; if (bytes < 1024) return `${bytes} B`; if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1048576).toFixed(1)} MB`; };
+
+  const fetchArchivedSessions = async () => {
+    setArchiveLoading(true);
+    try {
+      const res = await fetch("/api/chat/sessions/archived");
+      const data = await res.json();
+      setArchivedSessions(data.data || []);
+    } catch {}
+    setArchiveLoading(false);
+  };
+
+  const openArchiveModal = () => {
+    fetchArchivedSessions();
+    setArchiveModalOpen(true);
+  };
+
+  const unarchiveSession = async (id: string) => {
+    setArchiveBusyId(id);
+    try {
+      await fetch(`/api/chat/sessions/${id}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isArchived: false }),
+      });
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== id));
+      refreshSessions();
+    } catch {}
+    setArchiveBusyId(null);
+  };
+
+  const deleteArchivedSession = async (id: string) => {
+    if (!confirm("Delete this chat permanently? This cannot be undone.")) return;
+    setArchiveBusyId(id);
+    try {
+      await fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch {}
+    setArchiveBusyId(null);
+  };
+
+  const handleCopyMessage = async (content: string, messageId: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(messageId);
+      setTimeout(() => setCopiedMessageId(null), 2000);
+    } catch {}
+  };
+
+  const handleStartEdit = (messageId: string, content: string) => {
+    setEditingMessageId(messageId);
+    setEditContent(content);
+    setMessageActions(null);
+  };
+
+  const handleSaveEdit = async (messageId: string) => {
+    if (!editContent.trim() || !currentSessionId) { setEditingMessageId(null); return; }
+    setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, content: editContent.trim() } : m));
+    setEditingMessageId(null);
+  };
+
+  const handleStopResponse = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsStopping(true);
+      setTimeout(() => setIsStopping(false), 300);
+    }
+  };
 
   const renderAttachments = (attachments?: AttachmentItem[]) => {
     if (!attachments || attachments.length === 0) return null;
@@ -408,9 +574,9 @@ export default function ChatPage() {
         </div>
 
         <div className="px-2 pb-1">
-          <a href="/chat/archive" className={`flex items-center rounded-lg text-sm transition-colors ${sidebarOpen ? "gap-2 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent" : "w-10 h-10 mx-auto justify-center text-muted-foreground hover:text-foreground hover:bg-accent"}`}>
+          <button onClick={openArchiveModal} className={`flex items-center rounded-lg text-sm transition-colors ${sidebarOpen ? "gap-2 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent w-full" : "w-10 h-10 mx-auto justify-center text-muted-foreground hover:text-foreground hover:bg-accent"}`}>
             <Archive className="w-5 h-5 flex-shrink-0" />{sidebarOpen && <span>Archive</span>}
-          </a>
+          </button>
         </div>
 
         <div className="border-t border-border py-2 space-y-1">
@@ -441,19 +607,45 @@ export default function ChatPage() {
         {/* Top Bar */}
         <div className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-md px-4 py-2.5 flex items-center gap-3">
           <button onClick={() => setSidebarOpen((v) => !v)} className="p-2 hover:bg-accent rounded-lg transition-colors lg:hidden"><Menu className="w-5 h-5" /></button>
-          <div className="relative">
-            <button onClick={() => setModelDropdownOpen(!modelDropdownOpen)} className="flex items-center gap-2 px-3 py-1.5 bg-accent hover:bg-accent/80 border border-border rounded-lg text-sm transition-colors">
+          <div className="relative" ref={modelDropdownRef}>
+            <button onClick={() => setModelDropdownOpen(v => !v)} className="flex items-center gap-2 px-3 py-1.5 bg-accent hover:bg-accent/80 border border-border rounded-lg text-sm transition-colors">
               <Sparkles className="w-4 h-4 text-primary" />{selectedModelLabel}
               <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${modelDropdownOpen ? "rotate-180" : ""}`} />
             </button>
             {modelDropdownOpen && (
-              <div className="absolute top-full left-0 mt-2 w-56 bg-popover border border-border rounded-xl shadow-xl overflow-hidden z-50">
-                {availableModels.map((m) => (
-                  <button key={m.id} onClick={() => { setSelectedModel(m.id); setModelDropdownOpen(false); }}
-                    className={`w-full text-left px-4 py-2.5 hover:bg-accent text-sm transition-colors flex items-center justify-between ${selectedModel === m.id ? "bg-primary/10 text-primary" : "text-foreground"}`}>
-                    <span>{m.label}</span><span className="text-xs text-muted-foreground font-mono">{m.provider}</span>
-                  </button>
-                ))}
+              <div className="absolute top-full left-0 mt-2 w-72 bg-popover border border-border rounded-xl shadow-xl z-50">
+                <div className="p-2 border-b border-border">
+                  <input ref={modelSearchRef} type="text" value={modelSearch} onChange={e => { setModelSearch(e.target.value); setModelHoverIdx(-1); }} onKeyDown={e => {
+                    if (e.key === "ArrowDown") { e.preventDefault(); setModelHoverIdx(i => Math.min(i + 1, filteredModels.length - 1)); }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setModelHoverIdx(i => Math.max(i - 1, 0)); }
+                    else if (e.key === "Enter" && modelHoverIdx >= 0 && filteredModels[modelHoverIdx]) { setSelectedModel(filteredModels[modelHoverIdx].id); setModelDropdownOpen(false); setModelSearch(""); }
+                    else if (e.key === "Escape") { setModelDropdownOpen(false); setModelSearch(""); }
+                  }} placeholder="Search models..." className="w-full px-3 py-1.5 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50" />
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {filteredModels.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground/50">No models found</p>}
+                  {Object.entries(groupedByProvider).map(([provider, providerModels]) => (
+                    <div key={provider}>
+                      <div className="px-4 py-1 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">{provider}</div>
+                      {providerModels.map((m, _, arr) => {
+                        const globalIdx = filteredModels.indexOf(m);
+                        return (
+                        <div key={m.id} className="flex items-center group">
+                          <button onClick={() => { setSelectedModel(m.id); setModelDropdownOpen(false); setModelSearch(""); }}
+                            onMouseEnter={() => setModelHoverIdx(globalIdx)}
+                            className={`flex-1 text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${selectedModel === m.id ? "bg-primary/10 text-primary" : globalIdx === modelHoverIdx ? "bg-accent" : "text-foreground hover:bg-accent/50"}`}>
+                            <span className="truncate">{m.label || m.id}{m.isDefault && <span className="ml-1.5 text-[10px] text-primary/60">DEFAULT</span>}</span>
+                            <span className="text-[10px] text-muted-foreground/50 font-mono ml-2 flex-shrink-0">{m.category || "Chat"}</span>
+                          </button>
+                          <button onClick={() => toggleFavorite(m.id)} className="p-1 text-muted-foreground/30 hover:text-yellow-500 transition-colors flex-shrink-0" title={favoriteModels.includes(m.id) ? "Unfavorite" : "Favorite"}>
+                            <span className={`text-xs ${favoriteModels.includes(m.id) ? "text-yellow-500" : ""}`}>{favoriteModels.includes(m.id) ? "\u2605" : "\u2606"}</span>
+                          </button>
+                        </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -485,12 +677,50 @@ export default function ChatPage() {
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   {msg.role === "assistant" && <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary-foreground" /></div>}
-                  <div className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-card border border-border text-foreground rounded-bl-sm"}`}>
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                    {msg.imageUrl && <div className="mt-2"><img src={msg.imageUrl} alt={msg.content} className="max-h-80 w-auto rounded-lg border border-border" /></div>}
-                    {msg.videoUrl && <div className="mt-2"><video src={msg.videoUrl} controls className="max-h-80 w-auto max-w-full rounded-lg border border-border" /></div>}
-                    {renderAttachments(msg.attachments)}
-                    {msg.isStreaming && <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse rounded-sm" />}
+                  <div className={`group relative max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-card border border-border text-foreground rounded-bl-sm"}`}>
+                    {editingMessageId === msg.id ? (
+                      <div className="flex flex-col gap-2">
+                        <textarea
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 resize-none"
+                          rows={3}
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={() => handleSaveEdit(msg.id)} className="px-3 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium">Save</button>
+                          <button onClick={() => setEditingMessageId(null)} className="px-3 py-1 bg-muted text-foreground rounded-lg text-xs">Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        {msg.imageUrl && <div className="mt-2"><img src={msg.imageUrl} alt={msg.content} className="max-h-80 w-auto rounded-lg border border-border" /></div>}
+                        {msg.videoUrl && <div className="mt-2"><video src={msg.videoUrl} controls className="max-h-80 w-auto max-w-full rounded-lg border border-border" /></div>}
+                        {renderAttachments(msg.attachments)}
+                        {msg.isStreaming && !isStopping && <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse rounded-sm" />}
+                      </>
+                    )}
+                    {!msg.isStreaming && msg.content && editingMessageId !== msg.id && (
+                      <div className="absolute -top-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-card border border-border rounded-lg shadow-lg px-1 py-0.5">
+                        <button
+                          onClick={() => handleCopyMessage(msg.content, msg.id)}
+                          title="Copy"
+                          className="p-1 rounded hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          {copiedMessageId === msg.id ? <CheckCircle className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                        {msg.role === "user" && (
+                          <button
+                            onClick={() => handleStartEdit(msg.id, msg.content)}
+                            title="Edit"
+                            className="p-1 rounded hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {msg.role === "user" && <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold">{session?.user?.name?.slice(0, 1).toUpperCase() || "U"}</div>}
                 </div>
@@ -533,10 +763,10 @@ export default function ChatPage() {
                   style={{ minHeight: "48px", maxHeight: "200px" }}
                   onInput={(e: FormEvent<HTMLTextAreaElement>) => { const el = e.currentTarget; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }} />
               </div>
-              <button onClick={handleSend}
-                disabled={isLoading || !inputValue.trim() || (compliance !== null && !compliance.compliant)}
-                className="p-3 bg-primary hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed text-primary-foreground rounded-xl transition-all flex-shrink-0">
-                {isLoading ? <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> : <Send className="w-5 h-5" />}
+              <button onClick={isLoading ? handleStopResponse : handleSend}
+                disabled={!isLoading && (!inputValue.trim() || (compliance !== null && !compliance.compliant))}
+                className={`p-3 rounded-xl transition-all flex-shrink-0 ${isLoading ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-primary hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed text-primary-foreground"}`}>
+                {isLoading ? <Square className="w-5 h-5" /> : <Send className="w-5 h-5" />}
               </button>
             </div>
             {/* Toolbar row */}
@@ -667,6 +897,67 @@ export default function ChatPage() {
                 className="w-full py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-primary-foreground rounded-xl font-semibold transition-all flex items-center justify-center gap-2 text-sm">
                 {videoLoading ? <><div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> Processing...</> : <><Sparkles className="w-4 h-4" /> Apply Edit</>}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Archived Chats Modal ── */}
+      {archiveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setArchiveModalOpen(false)}>
+          <div className="w-full max-w-lg max-h-[80vh] bg-card border border-border rounded-2xl shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h2 className="text-base font-semibold flex items-center gap-2"><Archive className="w-4 h-4 text-primary" /> Archived Chats</h2>
+              <button onClick={() => setArchiveModalOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {archiveLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Loader2 className="w-6 h-6 animate-spin mb-2" />
+                  <span className="text-sm">Loading...</span>
+                </div>
+              ) : archivedSessions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Archive className="w-10 h-10 text-muted-foreground/40 mb-3" />
+                  <p className="text-sm text-muted-foreground">No archived chats</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {archivedSessions.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between gap-3 p-3 bg-muted/50 border border-border rounded-xl hover:border-primary/30 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                          <Bot className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{s.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(s.updatedAt).toLocaleString("en-PK", { hour12: false })}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => unarchiveSession(s.id)}
+                          disabled={archiveBusyId === s.id}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs transition-colors disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          Restore
+                        </button>
+                        <button
+                          onClick={() => deleteArchivedSession(s.id)}
+                          disabled={archiveBusyId === s.id}
+                          className="p-1.5 hover:bg-destructive/10 rounded-lg transition-colors text-destructive disabled:opacity-50"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

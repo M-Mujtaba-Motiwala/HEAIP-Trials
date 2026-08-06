@@ -1,6 +1,5 @@
 // =============================================================================
-// File Upload API — chat attachment upload → local /uploads or cloud storage
-// Phase 4: Phase 4 uses filesystem storage with metadata saved to ChatAttachment
+// File Upload API — chat attachment upload -> local /uploads or cloud storage
 // =============================================================================
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
@@ -8,6 +7,7 @@ import { db } from "@/lib/db";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { enforceFileUpload } from "@/lib/policy-enforcer";
 
 const UPLOAD_DIR = join(process.cwd(), "public", "uploads", "chat");
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -36,6 +36,17 @@ export async function POST(req: Request) {
     }
     if (file.size > MAX_SIZE_BYTES) {
       return NextResponse.json({ error: "File exceeds 10 MB limit." }, { status: 413 });
+    }
+
+    // ── Policy Enforcement: File Upload ──────────────────────────────────
+    const policyResult = await enforceFileUpload(file.name, file.type, file.size, sessionId);
+    if (!policyResult.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: policyResult.decision.blockReason || "File upload blocked by policy",
+        decisions: policyResult.decision.decisions,
+        warnings: policyResult.decision.warnings,
+      }, { status: 403 });
     }
 
     // Ensure session exists and belongs to user
@@ -70,6 +81,7 @@ export async function POST(req: Request) {
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
         url: `/uploads/chat/${storageKey}`,
+        classification: policyResult.classification,
       },
     }, { status: 201 });
   } catch (error) {

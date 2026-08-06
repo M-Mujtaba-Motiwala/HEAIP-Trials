@@ -14,6 +14,11 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const canRead = await hasPermission(session.user.id, "settings.update");
+    if (!canRead && session.user.role !== "SUPER_ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const featureFlags = await db.featureFlag.findMany({
       orderBy: { featureName: "asc" },
       include: {
@@ -36,7 +41,7 @@ export async function POST(req: Request) {
     }
 
     const canUpdate = await hasPermission(session.user.id, "settings.update");
-    if (!canUpdate && session.user.role !== "SUPER_ADMIN") {
+    if (!canUpdate) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

@@ -10,17 +10,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const role = session.user.role || "";
-    const roles: string[] = Array.isArray(session.user.roles)
-      ? (session.user.roles as string[])
-      : [role];
-
-    const allowed =
-      roles.includes("SUPER_ADMIN") ||
-      roles.includes("EXECUTIVE") ||
-      roles.includes("ADMIN") ||
-      (await hasPermission(session.user.id, "audit.view"));
-
+    const allowed = await hasPermission(session.user.id, "audit.view");
     if (!allowed) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

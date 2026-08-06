@@ -52,7 +52,7 @@ export async function POST(req: Request) {
     }
 
     const canApprove = await hasPermission(session.user.id, "registration.approve");
-    if (!canApprove && session.user.role !== "ADMIN" && session.user.role !== "SUPER_ADMIN") {
+    if (!canApprove) {
       return NextResponse.json({ error: "Forbidden: Lack registration.approve permission." }, { status: 403 });
     }
 

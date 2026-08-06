@@ -26,6 +26,25 @@ export async function POST(
       return NextResponse.json({ error: 'permissionIds must be an array' }, { status: 400 });
     }
 
+    // Validate all permission IDs exist
+    if (permissionIds.length > 0) {
+      const validPermissions = await db.permission.findMany({
+        where: { id: { in: permissionIds } },
+        select: { id: true },
+      });
+      if (validPermissions.length !== permissionIds.length) {
+        const validIds = new Set(validPermissions.map(p => p.id));
+        const invalidIds = permissionIds.filter((id: string) => !validIds.has(id));
+        return NextResponse.json({ error: `Invalid permission IDs: ${invalidIds.join(", ")}` }, { status: 400 });
+      }
+    }
+
+    // Protect system roles from full permission removal
+    const role = await db.role.findUnique({ where: { id: resolvedParams.id }, select: { code: true } });
+    if (role && ["SUPER_ADMIN"].includes(role.code) && permissionIds.length === 0) {
+      return NextResponse.json({ error: "Cannot remove all permissions from SUPER_ADMIN role." }, { status: 400 });
+    }
+
     // Wrap in a transaction: remove all existing, then insert new
     await db.$transaction(async (tx) => {
       await tx.rolePermission.deleteMany({

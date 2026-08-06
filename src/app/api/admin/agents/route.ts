@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasAnyPermission } from "@/lib/permissions";
+import { enforceAgentAction } from "@/lib/policy-enforcer";
 import { NextRequest, NextResponse } from "next/server";
 
 interface AgentRecord {
@@ -80,6 +81,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // ── Policy Enforcement: Agent Action ──────────────────────────────────
+    const action = body.action === "delete" ? "DELETE" : body.action === "edit" ? "EDIT" : "CREATE";
+    const agentName = body.name || body.agent?.name || "";
+    const agentModel = body.model || body.agent?.model;
+
+    const policyCheck = await enforceAgentAction(action, agentName, agentModel);
+    if (!policyCheck.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: policyCheck.decision.blockReason || "Agent operation blocked by policy",
+        decisions: policyCheck.decision.decisions,
+      }, { status: 403 });
+    }
+
     const setting = await db.systemSetting.findUnique({
       where: { key: "admin_agents" }
     });

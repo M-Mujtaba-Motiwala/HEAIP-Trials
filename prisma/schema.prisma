@@ -8,6 +8,23 @@ datasource db {
   extensions = [vector]
 }
 
+// ─── Organization Structure ─────────────────────────────────────────────────
+
+model CostCenter {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String   @unique
+  description String?
+  /// ACTIVE | INACTIVE
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  departments Department[]
+  teams       Team[]
+
+  @@map("cost_centers")
+}
+
 model Department {
   id                 String        @id @default(uuid())
   /// e.g., EXEC, IT, MKT, FIN, HR, SCM, PROD, QA, RND, SALES
@@ -17,30 +34,74 @@ model Department {
   /// ACTIVE | INACTIVE
   status             String        @default("ACTIVE")
   createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
   headOfDepartmentId String?
   headOfDepartment   Employee?     @relation("DepartmentHOD", fields: [headOfDepartmentId], references: [id])
   employees          Employee[]    @relation("DepartmentEmployees")
   featureFlags       FeatureFlag[]
   teams              Team[]
+  costCenterId       String?
+  costCenter         CostCenter?   @relation(fields: [costCenterId], references: [id])
+  /// Monthly budget in PKR (null = use org default)
+  monthlyBudgetPkr   Float?
+  /// Daily budget in PKR
+  dailyBudgetPkr     Float?
+  /// Yearly budget in PKR
+  yearlyBudgetPkr    Float?
+  /// Monthly token limit (null = unlimited)
+  monthlyTokenLimit  Int?
+  /// Monthly request limit
+  monthlyRequestLimit Int?
 
   @@map("departments")
 }
 
 model Team {
-  id           String     @id @default(uuid())
-  name         String
-  departmentId String
-  description  String?
+  id                String      @id @default(uuid())
+  name              String
+  /// Home department (primary) — kept for backward compat
+  departmentId      String
+  description       String?
   /// ACTIVE | INACTIVE
-  status       String     @default("ACTIVE")
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  employees    Employee[]
-  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  status            String      @default("ACTIVE")
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  employees         Employee[]  @relation("TeamPrimary")
+  department        Department  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  costCenterId      String?
+  costCenter        CostCenter? @relation(fields: [costCenterId], references: [id])
+  leadId            String?
+  lead              Employee?   @relation("TeamLead", fields: [leadId], references: [id])
+  /// Monthly budget in PKR (null = use department default)
+  monthlyBudgetPkr  Float?
+  /// Monthly token limit
+  monthlyTokenLimit Int?
+  /// Monthly request limit
+  monthlyRequestLimit Int?
+  /// Maximum concurrent sessions
+  maxConcurrentSessions Int?
+  /// JSON: assigned model IDs
+  assignedModels    String      @default("[]")
+  teamMembers       TeamMember[]
 
   @@index([departmentId])
   @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  employeeId String
+  /// LEAD | MEMBER | OBSERVER
+  role      String   @default("MEMBER")
+  joinedAt  DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  employee  Employee @relation("TeamMembership", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, employeeId])
+  @@index([teamId])
+  @@index([employeeId])
+  @@map("team_members")
 }
 
 model Employee {
@@ -55,7 +116,7 @@ model Employee {
   department         String
   /// FK to Department model
   departmentId       String?
-  /// FK to Team model
+  /// FK to Team model (primary team — backward compat)
   teamId             String?
   designation        String
   /// Primary role code for quick lookup
@@ -69,13 +130,17 @@ model Employee {
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
   policiesCreated    AiPolicy[]
+  policiesUpdated    AiPolicy[]            @relation("PolicyUpdater")
+  policyEvaluationLogs PolicyEvaluationLog[]
   auditLogs          AuditLog[]
   chatSessions       ChatSession[]
   delegatedBy        DelegatedAssignment[] @relation("Delegator")
   delegatedTo        DelegatedAssignment[] @relation("TargetUser")
   hodOfDepartments   Department[]          @relation("DepartmentHOD")
   deptRel            Department?           @relation("DepartmentEmployees", fields: [departmentId], references: [id])
-  teamRel            Team?                 @relation(fields: [teamId], references: [id])
+  teamRel            Team?                 @relation("TeamPrimary", fields: [teamId], references: [id])
+  teamLeadOf         Team[]                @relation("TeamLead")
+  teamMemberships    TeamMember[] @relation("TeamMembership")
   usageLogs          UsageLog[]
   assignedRoles      UserRole[]            @relation("RoleAssigner")
   userRoles          UserRole[]            @relation("UserRoles")
@@ -88,6 +153,169 @@ model Employee {
   @@index([registrationStatus])
   @@map("employees")
 }
+
+// ─── API Credential Management ──────────────────────────────────────────────
+
+model ApiCredential {
+  id              String   @id @default(uuid())
+  name            String
+  /// openai | anthropic | google | groq | azure | ollama | huggingface | together | custom
+  provider        String
+  /// Encrypted API key (AES-256-GCM)
+  apiKeyEncrypted String
+  /// Display alias for UI (e.g., "sk-...xyz")
+  apiKeyAlias     String
+  /// Base URL override (null = provider default)
+  baseUrl         String?
+  /// API key | OAuth | Azure AD | Custom
+  authType        String   @default("api_key")
+  /// Organization ID (OpenAI, etc.)
+  organizationId  String?
+  /// Project ID
+  projectId       String?
+  /// Region (Azure, etc.)
+  region          String?
+  /// API version
+  apiVersion      String?
+  /// JSON: custom headers
+  customHeaders   String   @default("{}")
+  /// ACTIVE | INACTIVE | ROTATED
+  status          String   @default("ACTIVE")
+  /// Last tested at
+  lastTestedAt    DateTime?
+  /// Last test result
+  lastTestResult  String?
+  /// Last rotation date
+  lastRotatedAt   DateTime?
+  /// Expiry date
+  expiresAt       DateTime?
+  /// Notes
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  models          AiModel[]
+  healthChecks    ModelHealthCheck[]
+
+  @@unique([provider, apiKeyAlias])
+  @@index([provider])
+  @@index([status])
+  @@map("api_credentials")
+}
+
+// ─── Enhanced AI Model Registry ─────────────────────────────────────────────
+
+model AiModel {
+  id              String   @id @default(uuid())
+  provider        String
+  modelId         String
+  displayName     String
+  enabled         Boolean  @default(true)
+  isDefault       Boolean  @default(false)
+  /// Chat | Vision | Embedding | Audio | Video | OCR | Code | Reasoning
+  category        String   @default("Chat")
+  /// Model version string
+  version         String?
+  /// Description
+  description     String?
+  /// JSON: capabilities object
+  capabilitiesJson String  @default("{}")
+  /// JSON: limits object
+  limitsJson      String   @default("{}")
+  /// JSON: pricing object (inputCostPer1K, outputCostPer1K, imageCost, audioCost, embeddingCost)
+  pricingJson     String   @default("{}")
+  /// JSON: policy integration (allowedDepartments, allowedTeams, allowedRoles, requiredPolicies, costLimits, dailyLimits)
+  policyJson      String   @default("{}")
+  /// JSON: general metadata (legacy compat)
+  metadataJson    String   @default("{}")
+  /// FK to ApiCredential
+  credentialId    String?
+  credential      ApiCredential? @relation(fields: [credentialId], references: [id])
+  /// Health status: HEALTHY | DEGRADED | DOWN | UNKNOWN
+  healthStatus    String   @default("UNKNOWN")
+  /// Last health check
+  lastHealthCheck DateTime?
+  /// Total requests (denormalized counter)
+  totalRequests   Int      @default(0)
+  /// Total cost (denormalized)
+  totalCostUsd    Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  healthChecks    ModelHealthCheck[]
+
+  @@unique([provider, modelId])
+  @@index([enabled, isDefault])
+  @@index([category])
+  @@index([credentialId])
+  @@map("ai_models")
+}
+
+model ModelHealthCheck {
+  id          String   @id @default(uuid())
+  modelId     String
+  credentialId String?
+  /// HEALTHY | DEGRADED | DOWN | TIMEOUT
+  status      String
+  /// Response time in ms
+  latencyMs   Int?
+  /// Error message if failed
+  error       String?
+  /// JSON: full response details
+  details     String   @default("{}")
+  createdAt   DateTime @default(now())
+  model       AiModel  @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  credential  ApiCredential? @relation(fields: [credentialId], references: [id])
+
+  @@index([modelId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("model_health_checks")
+}
+
+// ─── Hierarchical Quota Configuration ───────────────────────────────────────
+
+model QuotaConfig {
+  id          String   @id @default(uuid())
+  /// ORGANIZATION | DEPARTMENT | TEAM | USER | MODEL
+  scope       String
+  /// FK to the scope target (departmentId, teamId, userId, modelId). Null = org default
+  scopeTargetId String?
+  /// Monthly budget in PKR (null = no limit)
+  monthlyBudgetPkr Float?
+  /// Daily budget in PKR
+  dailyBudgetPkr   Float?
+  /// Yearly budget in PKR
+  yearlyBudgetPkr  Float?
+  /// Monthly token limit
+  monthlyTokenLimit Int?
+  /// Daily token limit
+  dailyTokenLimit   Int?
+  /// Monthly request count limit
+  monthlyRequestLimit Int?
+  /// Daily request count limit
+  dailyRequestLimit   Int?
+  /// Maximum concurrent sessions
+  maxConcurrentSessions Int?
+  /// Monthly file upload limit (count)
+  monthlyUploadLimit   Int?
+  /// Max file size in bytes
+  maxFileSizeBytes     Int?
+  /// JSON: model-specific limits { "modelId": { "dailyRequests": 100, "costCeiling": 50 } }
+  modelLimitsJson      String   @default("{}")
+  /// ACTIVE | INACTIVE
+  status         String   @default("ACTIVE")
+  /// Effective date
+  effectiveAt    DateTime?
+  /// Expiration date
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([scope, scopeTargetId])
+  @@index([scope])
+  @@map("quota_configs")
+}
+
+// ─── Existing Models (unchanged or enhanced) ────────────────────────────────
 
 model EmployeeMaster {
   id           String   @id @default(uuid())
@@ -308,22 +536,6 @@ model ChatAttachment {
   @@map("chat_attachments")
 }
 
-model AiModel {
-  id           String   @id @default(uuid())
-  provider     String
-  modelId      String
-  displayName  String
-  enabled      Boolean  @default(true)
-  isDefault    Boolean  @default(false)
-  metadataJson String   @default("{}")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@unique([provider, modelId])
-  @@index([enabled, isDefault])
-  @@map("ai_models")
-}
-
 model UsageLog {
   id           String   @id @default(uuid())
   employeeId   String
@@ -347,18 +559,87 @@ model AiPolicy {
   id          String   @id @default(uuid())
   name        String
   description String
-  /// RATE_LIMIT | CONTENT_FILTER | MODEL_ACCESS | DATA_FILTER
-  policyType  String
-  /// Serialised JSON
-  configJson  String
+  /// ACCESS_AUTHORIZATION | AI_MODEL_ACCESS | QUOTA_USAGE | CONTENT_MODERATION | DATA_PROTECTION | ATTACHMENT_SECURITY | CONFIDENTIALITY | LEGAL_COMPLIANCE | CONVERSATION_GOVERNANCE | PROMPT_INJECTION | KNOWLEDGE_BASE | AI_RESPONSE_VALIDATION | AUDIT_MONITORING | DATA_RETENTION
+  category    String   @default("ACCESS_AUTHORIZATION")
+  /// RATE_LIMIT | CONTENT_FILTER | MODEL_ACCESS | DATA_FILTER (legacy compat)
+  policyType  String?
+  /// LOW | MEDIUM | HIGH | CRITICAL
+  severity    String   @default("MEDIUM")
+  /// ORGANIZATION | DEPARTMENT | TEAM | ROLE | USER
+  scope       String   @default("ORGANIZATION")
+  /// JSON array of scope target IDs (departmentIds, teamIds, roleIds, userIds)
+  scopeTargets String  @default("[]")
+  /// JSON: array of action types
+  actions     String   @default("[\"BLOCK_REQUEST\"]")
+  /// JSON: trigger conditions
+  conditions  String   @default("{}")
+  /// JSON: exception rules
+  exceptions  String   @default("[]")
+  /// Priority 1-100 (higher = evaluated first)
+  priority    Int      @default(50)
+  /// Effective date (optional)
+  effectiveAt DateTime?
+  /// Expiration date (optional)
+  expiresAt   DateTime?
+  /// ACTIVE | INACTIVE | ARCHIVED
+  status      String   @default("ACTIVE")
+  /// Version counter
+  version     Int      @default(1)
   isActive    Boolean  @default(true)
   createdById String
+  updatedById String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdBy   Employee @relation(fields: [createdById], references: [id])
+  updatedBy   Employee? @relation("PolicyUpdater", fields: [updatedById], references: [id])
+  evaluationLogs PolicyEvaluationLog[]
+  scopes         PolicyScope[]
 
-  @@index([policyType])
+  @@index([category])
+  @@index([status])
   @@index([isActive])
+  @@index([priority(sort: Desc)])
+  @@index([scope])
   @@map("ai_policies")
+}
+
+model PolicyScope {
+  id         String   @id @default(uuid())
+  policyId   String
+  /// ORGANIZATION | DEPARTMENT | TEAM | ROLE | USER
+  scopeType  String
+  /// The target entity ID (deptId, teamId, roleId, userId)
+  targetId   String
+  createdAt  DateTime @default(now())
+  policy     AiPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, scopeType, targetId])
+  @@index([policyId])
+  @@index([scopeType, targetId])
+  @@map("policy_scopes")
+}
+
+model PolicyEvaluationLog {
+  id          String   @id @default(uuid())
+  policyId    String
+  employeeId  String
+  /// The context that triggered evaluation (message, upload, login, etc.)
+  contextType String
+  /// JSON: context metadata
+  contextJson String   @default("{}")
+  /// ALLOW | BLOCK | WARN | MASK | REDACT | ESCALATE | LOG_ONLY
+  decision    String
+  /// JSON: decision details
+  details     String   @default("{}")
+  createdAt   DateTime @default(now())
+  policy      AiPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([policyId])
+  @@index([employeeId])
+  @@index([decision])
+  @@index([createdAt])
+  @@map("policy_evaluation_logs")
 }
 
 model AuditLog {

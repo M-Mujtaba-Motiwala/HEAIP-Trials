@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1792" height="1024" viewBox="0 0 1792 1024">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="hsl(90, 65%, 22%)"/>
+      <stop offset="50%" stop-color="hsl(130, 70%, 35%)"/>
+      <stop offset="100%" stop-color="hsl(180, 65%, 20%)"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.25)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#g)"/>
+  <circle cx="22%" cy="18%" r="298" fill="rgba(255,255,255,0.08)"/>
+  <circle cx="78%" cy="82%" r="358" fill="rgba(255,255,255,0.06)"/>
+  <rect width="100%" height="100%" fill="url(#glow)"/>
+  <text x="896" y="456" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#ffffffcc" text-anchor="middle" letter-spacing="3">HAMDARD AI</text>
+  <text x="896" y="474" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#ffffff" text-anchor="middle" font-weight="600">genrate an image with a man</text><text x="896" y="512" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#ffffff" text-anchor="middle" font-weight="600">standing at a beach with a</text><text x="896" y="550" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#ffffff" text-anchor="middle" font-weight="600">lone wolf besides him</text>
+</svg>

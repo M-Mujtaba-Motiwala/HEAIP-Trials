@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
+import { enforceUserManagement } from "@/lib/policy-enforcer";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,6 +33,16 @@ export async function POST(req: Request, context: RouteContext) {
     const role = await db.role.findUnique({ where: { id: roleId } });
     if (!role) {
       return NextResponse.json({ error: "Role not found" }, { status: 404 });
+    }
+
+    // ── Policy Enforcement: Role Assignment ───────────────────────────────
+    const policyCheck = await enforceUserManagement("ROLE_ASSIGN", userId, role.code);
+    if (!policyCheck.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: policyCheck.decision.blockReason || "Role assignment blocked by policy",
+        decisions: policyCheck.decision.decisions,
+      }, { status: 403 });
     }
 
     const userRole = await db.userRole.upsert({
@@ -80,6 +91,16 @@ export async function DELETE(req: Request, context: RouteContext) {
 
     if (!roleId) {
       return NextResponse.json({ error: "roleId query param is required" }, { status: 400 });
+    }
+
+    // ── Policy Enforcement: Role Revocation ───────────────────────────────
+    const policyCheck = await enforceUserManagement("ROLE_ASSIGN", userId);
+    if (!policyCheck.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: policyCheck.decision.blockReason || "Role revocation blocked by policy",
+        decisions: policyCheck.decision.decisions,
+      }, { status: 403 });
     }
 
     await db.userRole.delete({

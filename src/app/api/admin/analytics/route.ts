@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
+import { enforceAnalyticsVisibility } from "@/lib/policy-enforcer";
 
 export async function GET() {
   try {
@@ -15,9 +16,30 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Aggregate usage by department
+    // ── Policy Enforcement: Analytics Visibility ──────────────────────────
+    const visibility = await enforceAnalyticsVisibility();
+    if (!visibility.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: visibility.decision.blockReason || "Analytics access denied by policy",
+        decisions: visibility.decision.decisions,
+      }, { status: 403 });
+    }
+
+    // Build department filter based on policy visibility
+    const departmentFilter: Record<string, unknown> = {};
+    if (!visibility.visibleDepartments.includes("*")) {
+      if (visibility.visibleDepartments.length === 0) {
+        // No departments visible — return empty
+        return NextResponse.json({ data: [], totals: { tokensInput: 0, tokensOutput: 0, costUsd: 0, tokensTotal: 0 }, models: [] });
+      }
+      departmentFilter.department = { in: visibility.visibleDepartments };
+    }
+
+    // Aggregate usage by department (filtered by policy)
     const byDepartment = await db.usageLog.groupBy({
       by: ["department"],
+      where: departmentFilter,
       _sum: { tokensInput: true, tokensOutput: true, costUsd: true },
       _count: { id: true },
       orderBy: { _sum: { tokensInput: "desc" } },
@@ -40,9 +62,10 @@ export async function GET() {
       { tokensInput: 0, tokensOutput: 0, costUsd: 0 }
     );
 
-    // Model distribution
+    // Model distribution (filtered by policy)
     const byModel = await db.usageLog.groupBy({
       by: ["aiProvider", "aiModel"],
+      where: departmentFilter,
       _sum: { tokensInput: true, tokensOutput: true, costUsd: true },
       orderBy: { aiProvider: "asc" },
       take: 30,
@@ -55,6 +78,11 @@ export async function GET() {
         tokensTotal: totals.tokensInput + totals.tokensOutput,
       },
       models: byModel,
+      // Include visibility info for the frontend
+      _visibility: {
+        costVisible: visibility.costVisible,
+        departments: visibility.visibleDepartments,
+      },
     });
   } catch (error: unknown) {
     console.error("[ANALYTICS_GET]", error);

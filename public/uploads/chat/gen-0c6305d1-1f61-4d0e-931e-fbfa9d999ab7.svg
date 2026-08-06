@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="hsl(248, 65%, 22%)"/>
+      <stop offset="50%" stop-color="hsl(288, 70%, 35%)"/>
+      <stop offset="100%" stop-color="hsl(338, 65%, 20%)"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.25)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#g)"/>
+  <circle cx="22%" cy="18%" r="170" fill="rgba(255,255,255,0.08)"/>
+  <circle cx="78%" cy="82%" r="204" fill="rgba(255,255,255,0.06)"/>
+  <rect width="100%" height="100%" fill="url(#glow)"/>
+  <text x="512" y="456" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#ffffffcc" text-anchor="middle" letter-spacing="3">HAMDARD AI</text>
+  <text x="512" y="512" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#ffffff" text-anchor="middle" font-weight="600">A sunrise over the sea</text>
+</svg>

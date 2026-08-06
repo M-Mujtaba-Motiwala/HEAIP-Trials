@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasAnyPermission } from "@/lib/permissions";
+import { enforceWorkflowAction } from "@/lib/policy-enforcer";
 import { NextRequest, NextResponse } from "next/server";
 
 interface WorkflowRecord {
@@ -79,6 +80,20 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // ── Policy Enforcement: Workflow Action ───────────────────────────────
+    const action = body.action === "delete" ? "DELETE" : body.action === "edit" ? "EDIT" : "CREATE";
+    const workflowName = body.name || body.workflow?.name || "";
+
+    const policyCheck = await enforceWorkflowAction(action, workflowName);
+    if (!policyCheck.allowed) {
+      return NextResponse.json({
+        error: "POLICY_BLOCKED",
+        reason: policyCheck.decision.blockReason || "Workflow operation blocked by policy",
+        decisions: policyCheck.decision.decisions,
+      }, { status: 403 });
+    }
+
     const setting = await db.systemSetting.findUnique({
       where: { key: "admin_workflows" }
     });

@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { getUserPermissionProfile } from "@/lib/permissions";
 import { authConfig } from "./auth.config";
+import { enforceLogin } from "@/lib/policy-enforcer";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -60,6 +61,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error("Invalid email or password");
         }
 
+        // ── Policy Enforcement: Login ──────────────────────────────────────
+        const loginCheck = await enforceLogin(employee.id);
+        if (!loginCheck.allowed) {
+          throw new Error(loginCheck.decision.blockReason || "Login denied by policy");
+        }
+
         // Fetch dRBAC permission profile
         const permProfile = await getUserPermissionProfile(employee.id);
 
@@ -80,4 +87,3 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
 });
-

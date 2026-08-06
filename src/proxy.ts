@@ -13,7 +13,7 @@ const { auth } = NextAuth(authConfig);
 const publicRoutes = ["/login", "/api/auth"];
 
 // Routes that require administrative authorization
-const adminRoutes = ["/admin"];
+const adminRoutes = ["/admin", "/api/admin"];
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
@@ -29,6 +29,10 @@ export default auth((req) => {
   // Check authentication
   const isAuthenticated = !!req.auth?.user;
   if (!isAuthenticated) {
+    // API routes return 401
+    if (pathname.startsWith("/api/")) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const loginUrl = new URL("/login", req.nextUrl.origin);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
@@ -51,6 +55,9 @@ export default auth((req) => {
       permissions.includes("*");
 
     if (!isAuthorized) {
+      if (pathname.startsWith("/api/")) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
       const chatUrl = new URL("/chat", req.nextUrl.origin);
       chatUrl.searchParams.set("error", "unauthorized");
       return NextResponse.redirect(chatUrl);
