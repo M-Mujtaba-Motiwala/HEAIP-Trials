@@ -1,10 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, unlink, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasAnyPermission } from "@/lib/permissions";
+import { parseVideoEditInstruction } from "@/lib/video-parser";
+import { processVideo } from "@/lib/video-editor";
 
 export const maxDuration = 60;
 
@@ -59,17 +61,47 @@ export async function POST(request: Request) {
     }
 
     const extension = path.extname(file.name).replace(/[^.a-zA-Z0-9]/g, "");
-    const storageKey = `${randomUUID()}${extension}`;
+    const tempStorageKey = `temp-${randomUUID()}${extension}`;
+    const finalStorageKey = `edited-${randomUUID()}${extension}`;
     const uploadDirectory = path.join(process.cwd(), "public", "uploads", "chat");
+    
     await mkdir(uploadDirectory, { recursive: true });
+    
+    const tempFilePath = path.join(uploadDirectory, tempStorageKey);
+    const finalFilePath = path.join(uploadDirectory, finalStorageKey);
+    
     const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(path.join(uploadDirectory, storageKey), buffer);
+    await writeFile(tempFilePath, buffer);
+
+    let finalVideoUrl = "";
+    let finalSizeBytes = file.size;
+
+    try {
+      const plan = await parseVideoEditInstruction(instruction);
+      
+      if (!plan.operations || plan.operations.length === 0) {
+        await writeFile(finalFilePath, buffer);
+      } else {
+        await processVideo(tempFilePath, finalFilePath, plan);
+      }
+      
+      finalVideoUrl = `/uploads/chat/${finalStorageKey}`;
+      const fileStats = await stat(finalFilePath);
+      finalSizeBytes = fileStats.size;
+    } catch (err) {
+      console.error("[VIDEO EDIT ERROR]", err);
+      finalVideoUrl = `/uploads/chat/${tempStorageKey}`; // Fallback
+    } finally {
+      if (finalVideoUrl !== `/uploads/chat/${tempStorageKey}`) {
+         try { await unlink(tempFilePath); } catch (e) {}
+      }
+    }
 
     const assistantMessage = await db.message.create({
       data: {
         sessionId: currentSessionId,
         role: "assistant",
-        content: `Video edit request received: "${instruction}". Below is the processed output.`,
+        content: `Video edit completed for: "${instruction}".`,
       },
     });
 
@@ -77,15 +109,15 @@ export async function POST(request: Request) {
       data: {
         sessionId: currentSessionId,
         uploadedById: session.user.id,
-        fileName: file.name,
+        fileName: `edited-${file.name}`,
         mimeType: file.type,
-        sizeBytes: file.size,
-        storageKey,
+        sizeBytes: finalSizeBytes,
+        storageKey: finalVideoUrl.replace("/uploads/chat/", ""),
         messageId: assistantMessage.id,
       },
     });
 
-    return NextResponse.json({ data: { messageId: assistantMessage.id, videoUrl: `/uploads/chat/${storageKey}`, sessionId: currentSessionId } }, { status: 201 });
+    return NextResponse.json({ data: { messageId: assistantMessage.id, videoUrl: finalVideoUrl, sessionId: currentSessionId } }, { status: 201 });
   } catch (error) {
     console.error("[CHAT_VIDEO_POST]", error);
     return NextResponse.json({ error: "Unable to process video." }, { status: 500 });

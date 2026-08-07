@@ -7,6 +7,7 @@ import {
   Upload, Image as ImageIcon, Video, Send, Bot,
   AlertTriangle, CheckCircle, Clock, Sparkles, Paperclip,
   MoreVertical, Pencil, Trash2, FileDown, Copy, RotateCcw, Loader2, Square,
+  ExternalLink, Download
 } from "lucide-react";
 import { HamdardLogo } from "@/components/HamdardLogo";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -473,6 +474,33 @@ export default function ChatPage() {
     setArchiveBusyId(null);
   };
 
+  const handleCopyImage = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    } catch (err) {
+      console.error("Failed to copy image", err);
+    }
+  };
+
+  const handleDownloadImage = async (url: string, fallbackName: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("Failed to download image", err);
+    }
+  };
+
   const handleCopyMessage = async (content: string, messageId: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -507,7 +535,20 @@ export default function ChatPage() {
     return (
       <div className="flex flex-col gap-2 mt-2">
         {attachments.map((a) => a.mimeType.startsWith("image/") ? (
-          <img key={a.id} src={a.url} alt={a.fileName} className="max-h-80 w-auto rounded-lg border border-border" />
+          <div key={a.id} className="relative group/image inline-block self-start">
+            <img src={a.url} alt={a.fileName} className="max-h-80 w-auto rounded-lg border border-border" />
+            <div className="absolute top-2 right-2 opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center gap-1 bg-background/90 backdrop-blur-sm border border-border rounded-lg shadow-sm p-1">
+              <a href={a.url} target="_blank" rel="noopener noreferrer" title="View" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                <ExternalLink className="w-4 h-4" />
+              </a>
+              <button onClick={() => handleCopyImage(a.url)} title="Copy Image" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                <Copy className="w-4 h-4" />
+              </button>
+              <button onClick={() => handleDownloadImage(a.url, a.fileName)} title="Download" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                <Download className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         ) : (
           <a key={a.id} href={a.url} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border border-border">
@@ -695,7 +736,22 @@ export default function ChatPage() {
                     ) : (
                       <>
                         <p className="whitespace-pre-wrap">{msg.content}</p>
-                        {msg.imageUrl && <div className="mt-2"><img src={msg.imageUrl} alt={msg.content} className="max-h-80 w-auto rounded-lg border border-border" /></div>}
+                        {msg.imageUrl && (
+                          <div className="mt-2 relative group/image inline-block self-start">
+                            <img src={msg.imageUrl} alt={msg.content} className="max-h-80 w-auto rounded-lg border border-border" />
+                            <div className="absolute top-2 right-2 opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center gap-1 bg-background/90 backdrop-blur-sm border border-border rounded-lg shadow-sm p-1">
+                              <a href={msg.imageUrl} target="_blank" rel="noopener noreferrer" title="View" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                                <ExternalLink className="w-4 h-4" />
+                              </a>
+                              <button onClick={() => handleCopyImage(msg.imageUrl!)} title="Copy Image" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                                <Copy className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => handleDownloadImage(msg.imageUrl!, `generated-image-${msg.id}.png`)} title="Download" className="p-1.5 rounded hover:bg-accent text-foreground transition-colors">
+                                <Download className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         {msg.videoUrl && <div className="mt-2"><video src={msg.videoUrl} controls className="max-h-80 w-auto max-w-full rounded-lg border border-border" /></div>}
                         {renderAttachments(msg.attachments)}
                         {msg.isStreaming && !isStopping && <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse rounded-sm" />}

@@ -1606,6 +1606,10 @@ function CostsTab() {
   const [data, setData] = useState<UsageStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [monthlyQuotaPKR, setMonthlyQuotaPKR] = useState(15000);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("15000");
+  const [isSaving, setIsSaving] = useState(false);
+  const { data: session } = useSession();
 
   useEffect(() => {
     Promise.all([
@@ -1620,11 +1624,38 @@ function CostsTab() {
         const parsedQuota = Number(quotaSetting?.value);
         if (quotaSetting && Number.isFinite(parsedQuota) && parsedQuota > 0) {
           setMonthlyQuotaPKR(parsedQuota);
+          setEditValue(parsedQuota.toString());
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleSaveQuota = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: "ai.monthly_quota_pkr",
+          value: editValue,
+          category: "AI",
+        }),
+      });
+      if (res.ok) {
+        setMonthlyQuotaPKR(Number(editValue));
+        setIsEditing(false);
+      } else {
+        alert("Failed to update budget limit.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error updating budget limit.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const PKR_RATE = 280;
   const totalCost = data.reduce((s, d) => s + d.costUsd, 0);
@@ -1632,6 +1663,7 @@ function CostsTab() {
   const MONTHLY_QUOTA_PKR = monthlyQuotaPKR;
   const spentPKR = totalCost * PKR_RATE;
   const pctUsed = Math.min((spentPKR / MONTHLY_QUOTA_PKR) * 100, 100);
+  const canEdit = session?.user?.role === "SUPER_ADMIN" || session?.user?.role === "ADMIN";
 
   return (
     <div className="space-y-6">
@@ -1656,7 +1688,47 @@ function CostsTab() {
         </div>
         <div className="flex items-center justify-between text-xs text-muted-foreground/70">
           <span>PKR {spentPKR.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} spent</span>
-          <span>PKR {MONTHLY_QUOTA_PKR.toLocaleString()} limit</span>
+          
+          <div className="flex items-center gap-2">
+            {isEditing ? (
+              <div className="flex items-center gap-2">
+                <span className="text-foreground">PKR</span>
+                <input 
+                  type="number" 
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  className="bg-background border border-border rounded px-2 py-1 w-24 text-foreground text-xs"
+                />
+                <button 
+                  onClick={handleSaveQuota} 
+                  disabled={isSaving}
+                  className="bg-primary text-primary-foreground px-2 py-1 rounded hover:opacity-90 disabled:opacity-50 transition"
+                >
+                  {isSaving ? "Saving..." : "Save"}
+                </button>
+                <button 
+                  onClick={() => { setIsEditing(false); setEditValue(MONTHLY_QUOTA_PKR.toString()); }}
+                  disabled={isSaving}
+                  className="bg-muted text-muted-foreground px-2 py-1 rounded hover:bg-muted/80 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span>PKR {MONTHLY_QUOTA_PKR.toLocaleString()} limit</span>
+                {canEdit && (
+                  <button 
+                    onClick={() => setIsEditing(true)}
+                    className="p-1 hover:bg-muted rounded text-primary transition"
+                    title="Edit Budget"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         {pctUsed > 85 && (
           <div className="mt-3 flex items-center gap-2 text-red-600 dark:text-red-300 text-xs bg-red-500/10 dark:bg-red-900/20 border border-red-500/20 dark:border-red-700/30 rounded-lg px-3 py-2">
