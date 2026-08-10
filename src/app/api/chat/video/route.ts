@@ -97,27 +97,37 @@ export async function POST(request: Request) {
       }
     }
 
-    const assistantMessage = await db.message.create({
-      data: {
-        sessionId: currentSessionId,
-        role: "assistant",
-        content: `Video edit completed for: "${instruction}".`,
-      },
-    });
+    // ── Persist to DB ─────────────────────────────────────────────────────
+    // IMPORTANT: If DB writes fail after a successful encode we MUST clean
+    // up the output file to avoid an unbounded on-disk storage leak.
+    try {
+      const assistantMessage = await db.message.create({
+        data: {
+          sessionId: currentSessionId,
+          role: "assistant",
+          content: `Video edit completed for: "${instruction}".`,
+        },
+      });
 
-    await db.chatAttachment.create({
-      data: {
-        sessionId: currentSessionId,
-        uploadedById: session.user.id,
-        fileName: `edited-${file.name}`,
-        mimeType: file.type,
-        sizeBytes: finalSizeBytes,
-        storageKey: finalVideoUrl.replace("/uploads/chat/", ""),
-        messageId: assistantMessage.id,
-      },
-    });
+      await db.chatAttachment.create({
+        data: {
+          sessionId: currentSessionId,
+          uploadedById: session.user.id,
+          fileName: `edited-${file.name}`,
+          mimeType: file.type,
+          sizeBytes: finalSizeBytes,
+          storageKey: finalVideoUrl.replace("/uploads/chat/", ""),
+          messageId: assistantMessage.id,
+        },
+      });
 
-    return NextResponse.json({ data: { messageId: assistantMessage.id, videoUrl: finalVideoUrl, sessionId: currentSessionId } }, { status: 201 });
+      return NextResponse.json({ data: { messageId: assistantMessage.id, videoUrl: finalVideoUrl, sessionId: currentSessionId } }, { status: 201 });
+    } catch (dbError) {
+      console.error("[CHAT_VIDEO_POST] DB persistence failed — cleaning up output file", dbError);
+      // Best-effort cleanup: remove the encoded file to prevent storage leak.
+      try { await unlink(path.join(uploadDirectory, finalVideoUrl.replace("/uploads/chat/", ""))); } catch (_) {}
+      throw dbError; // Propagates to the outer catch → returns 500
+    }
   } catch (error) {
     console.error("[CHAT_VIDEO_POST]", error);
     return NextResponse.json({ error: "Unable to process video." }, { status: 500 });

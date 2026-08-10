@@ -5,7 +5,7 @@
 # 1. Base Image
 FROM node:20-alpine AS base
 WORKDIR /app
-RUN apk add --no-co-cache libc6-compat
+RUN apk add --no-cache libc6-compat
 COPY package.json package-lock.json* ./
 
 # 2. Dependencies

@@ -19,14 +19,30 @@ import {
 
 // ─── Generic Enforcer ───────────────────────────────────────────────────────
 
+// Strict allow-list regex covering IPv4, IPv4-mapped IPv6 and plain IPv6 addresses.
+const VALID_IP_RE =
+  /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$|^[0-9a-fA-F:]{2,39}$/;
+
 /**
- * Extract client IP from request headers (X-Forwarded-For, X-Real-IP, etc.).
+ * Extract the real client IP from request headers.
+ *
+ * Security: the `X-Forwarded-For` header is fully attacker-controlled in
+ * deployments that don't sit behind a trusted reverse proxy. We therefore
+ * validate every segment of the header against a strict IP regex. If none
+ * of the values look like a real IP address we fall through to `X-Real-IP`
+ * and finally return "unknown" rather than exposing the raw header value to
+ * policy evaluation — which could be abused to spoof whitelisted IPs.
  */
 export function getClientIp(headers: Headers): string {
   const forwarded = headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  if (forwarded) {
+    for (const segment of forwarded.split(",")) {
+      const candidate = segment.trim();
+      if (VALID_IP_RE.test(candidate)) return candidate;
+    }
+  }
   const realIp = headers.get("x-real-ip");
-  if (realIp) return realIp;
+  if (realIp && VALID_IP_RE.test(realIp.trim())) return realIp.trim();
   return "unknown";
 }
 

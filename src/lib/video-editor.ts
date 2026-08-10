@@ -1,8 +1,31 @@
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+import path from "node:path";
 import { VideoEditPlan } from "./video-parser";
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+// ─── Security: Clip Path Validator ───────────────────────────────────────────
+// Only allow bare filenames (no path separators, no dots-dot sequences).
+// All system clips MUST reside in <cwd>/public/clips/ and nowhere else.
+const SAFE_CLIPS_DIR = path.join(process.cwd(), "public", "clips");
+const SAFE_FILENAME_RE = /^[a-zA-Z0-9_\-]+\.(mp4|webm|mov|avi|mpeg)$/;
+
+/**
+ * Resolves a clip filename to an absolute path inside SAFE_CLIPS_DIR.
+ * Throws if the filename is not a bare, allow-listed name.
+ */
+export function validateClipPath(filename: string): string {
+  if (!filename || !SAFE_FILENAME_RE.test(filename)) {
+    throw new Error(`Invalid path: "${filename}" — only bare filenames are allowed for merge operations.`);
+  }
+  // Belt-and-suspenders: resolve and assert the result is still inside SAFE_CLIPS_DIR.
+  const resolved = path.resolve(SAFE_CLIPS_DIR, filename);
+  if (!resolved.startsWith(SAFE_CLIPS_DIR + path.sep) && resolved !== SAFE_CLIPS_DIR) {
+    throw new Error(`Path traversal detected: "${filename}" resolved outside the clips directory.`);
+  }
+  return resolved;
+}
 
 export async function processVideo(
   inputPath: string,
@@ -78,7 +101,9 @@ export async function processVideo(
         }
       } else if (op.type === "merge") {
         if (op.second_video_path && op.merge_position) {
-          command.input(op.second_video_path);
+          // SECURITY: Validate before passing to ffmpeg to prevent SSRF/path traversal.
+          const safeClipPath = validateClipPath(op.second_video_path);
+          command.input(safeClipPath);
           const currentInputIdx = inputCount++;
           const mergeV = `${currentInputIdx}:v`;
           const mergeA = `${currentInputIdx}:a`;

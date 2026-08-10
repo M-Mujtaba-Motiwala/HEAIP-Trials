@@ -15,10 +15,13 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:hamdard123@postgres:5432/hamdard_ai?schema=public
-      - AUTH_SECRET=hamdard-ai-platform-secret-key-change-in-production
-      - NEXTAUTH_URL=http://localhost:3000
-      - REDIS_URL=redis://redis:6379
+      # ── Secrets: supply via .env or runtime injection ──────────────────────
+      # Never hardcode production values here. Copy .env.compose.example and
+      # populate it, then run: docker compose --env-file .env.compose up
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:changeme@postgres:5432/hamdard_ai?schema=public}
+      - AUTH_SECRET=${AUTH_SECRET:-CHANGE_ME_IN_PRODUCTION_USE_openssl_rand_-hex_32}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,9 +35,9 @@ services:
     container_name: hamdard_postgres
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: hamdard123
-      POSTGRES_DB: hamdard_ai
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-hamdard_ai}
     ports:
       - "5432:5432"
     volumes:
