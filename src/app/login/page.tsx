@@ -116,7 +116,7 @@ export default function LoginPage() {
                 placeholder="you@hamdard.com.pk"
                 required
                 autoFocus
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8DC63F] focus:border-transparent bg-slate-50 text-slate-900 placeholder-slate-400 transition-all"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-green-700 bg-white text-gray-900 placeholder-slate-400 transition-all"
               />
             </div>
 
@@ -129,7 +129,7 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full px-4 py-3 pr-12 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8DC63F] focus:border-transparent bg-slate-50 text-slate-900 placeholder-slate-400 transition-all"
+                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-green-700 bg-white text-gray-900 placeholder-slate-400 transition-all"
                 />
                 <button
                   type="button"

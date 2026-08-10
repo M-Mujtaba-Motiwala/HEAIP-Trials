@@ -1,34 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hamdard AI Platform (HEAIP)
+
+The Hamdard AI Platform is an enterprise-grade, multi-tenant AI governance and operational platform. It provides employees access to a variety of Large Language Models (LLMs) and tools (including document processing, video editing, and image generation) while enforcing strict Delegation-based Role-Based Access Control (dRBAC), budget tracking in local currency (PKR), and comprehensive AI usage policies.
+
+## Features
+
+- **Enterprise Governance:** Granular dRBAC, department and team hierarchies, and hierarchical quotas/budgets.
+- **Advanced Policy Engine:** Configurable AI policies to intercept, redact, block, or warn on AI interactions.
+- **Multi-Modal AI:** Support for Chat, Document Uploads (PDF/Word), Video Parsing, and Image Generation.
+- **Cost Analytics:** Real-time dashboards monitoring token usage and costs across departments and individual models.
+
+## Tech Stack
+
+- **Framework:** Next.js (App Router)
+- **Language:** TypeScript
+- **Database:** PostgreSQL (with `pgvector` for future RAG workloads)
+- **ORM:** Prisma v7
+- **Styling:** Tailwind CSS
+- **Orchestration:** Docker & Docker Compose (includes Redis for caching/rate limiting)
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 20+
+- Docker and Docker Compose (if running the full stack locally)
+- A PostgreSQL 16 database (can be provided by Docker or a managed service like Neon)
+
+### 1. Environment Setup
+
+Copy the example environment files and configure your secrets:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.local.example .env.local
+cp .env.compose.example .env.compose
+```
+*Note: Ensure `DATABASE_URL` and `AUTH_SECRET` are correctly set.*
+
+### 2. Local Development (Node.js)
+
+To run the application locally in development mode:
+
+1. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Generate Prisma Client:**
+   ```bash
+   npx prisma generate
+   ```
+
+3. **Database Migrations and Seeding:**
+   Apply database migrations and populate the database with initial departments, roles, and administrative users:
+   ```bash
+   npx prisma migrate dev
+   npx prisma db seed
+   ```
+
+4. **Start the Development Server:**
+   ```bash
+   npm run dev
+   ```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser.
+
+### 3. Production / Docker Compose Deployment
+
+To deploy the entire stack (Next.js, PostgreSQL, Redis) via Docker Compose:
+
+```bash
+docker compose --env-file .env.compose up -d --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The application will be exposed on port `3000`. 
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Architecture & Technical Audit
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A comprehensive breakdown of the system architecture, component reasoning, known flaws, and the strategic roadmap to production readiness is documented in the [TECHNICAL_AUDIT_REPORT.md](./TECHNICAL_AUDIT_REPORT.md).

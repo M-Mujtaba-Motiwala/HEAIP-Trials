@@ -134,6 +134,7 @@ model Employee {
   policyEvaluationLogs PolicyEvaluationLog[]
   auditLogs            AuditLog[]
   chatSessions         ChatSession[]
+  activeSessions       ActiveSession[]
   delegatedBy          DelegatedAssignment[] @relation("Delegator")
   delegatedTo          DelegatedAssignment[] @relation("TargetUser")
   hodOfDepartments     Department[]          @relation("DepartmentHOD")
@@ -498,6 +499,19 @@ model ChatSession {
   @@index([createdAt])
   @@index([isArchived])
   @@map("chat_sessions")
+}
+
+model ActiveSession {
+  id           String   @id @default(uuid())
+  employeeId   String
+  sessionToken String   @unique
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([lastActiveAt])
+  @@map("active_sessions")
 }
 
 model Message {

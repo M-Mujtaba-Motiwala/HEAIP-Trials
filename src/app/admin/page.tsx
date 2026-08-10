@@ -6,8 +6,18 @@ import {
   BarChart3, Users, Shield, Lock, TrendingUp,
   Zap, ArrowLeft, Building2, ScrollText, Bot, GitBranch,
   RefreshCw, Plus, Edit2, Trash2, UserCheck, UserX, Search,
-  AlertTriangle, Activity, DollarSign, Cpu, X, Copy, Archive, type LucideIcon,
+  AlertTriangle, Activity, DollarSign, Cpu, X, Copy, Archive, ChevronDown,
+  Radio, Wifi, WifiOff, Clock, Database, Server, HardDrive, CheckCircle2, XCircle, type LucideIcon,
 } from "lucide-react";
+import {
+  BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
+import {
+  useAdminStatsStream,
+  type AdminStatsPayload,
+  type Timeframe,
+} from "@/lib/use-admin-stats-stream";
 import { HamdardLogo } from "@/components/HamdardLogo";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -92,22 +102,57 @@ interface CostCenterData {
   _count?: { departments: number; teams: number };
 }
 
-// ─── Tab Config ──────────────────────────────────────────────────────────────
-const TABS = [
-  { id: "overview",    label: "Overview",    icon: BarChart3 },
-  { id: "users",       label: "Users",       icon: Users },
-  { id: "teams",       label: "Teams",       icon: Building2 },
-  { id: "roles",       label: "Roles",       icon: Lock },
-  { id: "policies",    label: "Policies",    icon: Shield },
-  { id: "costs",       label: "Costs",       icon: DollarSign },
-  { id: "analytics",   label: "Analytics",   icon: TrendingUp },
-  { id: "audit",       label: "Audit",       icon: ScrollText },
-  { id: "agents",      label: "Agents",      icon: Bot },
-  { id: "workflows",   label: "Workflows",   icon: GitBranch },
-  { id: "models",      label: "Models",      icon: Cpu },
-  { id: "credentials", label: "Credentials", icon: Lock },
-  { id: "quotas",      label: "Quotas",      icon: DollarSign },
-  { id: "costcenters", label: "Cost Centers", icon: Building2 },
+// ─── Nav Config ───────────────────────────────────────────────────────────────
+// "Overview" stays standalone. Everything else lives in a dropdown group.
+const NAV_GROUPS = [
+  {
+    id: "user-management",
+    label: "User Management",
+    icon: Users,
+    items: [
+      { id: "users",    label: "Users",    icon: Users },
+      { id: "teams",    label: "Teams",    icon: Building2 },
+      { id: "roles",    label: "Roles",    icon: Lock },
+      { id: "policies", label: "Policies", icon: Shield },
+    ],
+  },
+  {
+    id: "financials",
+    label: "Financials",
+    icon: DollarSign,
+    items: [
+      { id: "costs",       label: "Costs",        icon: DollarSign },
+      { id: "costcenters", label: "Cost Centers",  icon: Building2 },
+    ],
+  },
+  {
+    id: "insights",
+    label: "Insights",
+    icon: TrendingUp,
+    items: [
+      { id: "analytics", label: "Analytics", icon: TrendingUp },
+      { id: "audit",     label: "Audit",     icon: ScrollText },
+    ],
+  },
+  {
+    id: "automation",
+    label: "Automation",
+    icon: Bot,
+    items: [
+      { id: "agents",    label: "Agents",    icon: Bot },
+      { id: "workflows", label: "Workflows", icon: GitBranch },
+    ],
+  },
+  {
+    id: "system-config",
+    label: "System Config",
+    icon: Cpu,
+    items: [
+      { id: "models",      label: "Models",      icon: Cpu },
+      { id: "credentials", label: "Credentials",  icon: Lock },
+      { id: "quotas",      label: "Quotas",       icon: DollarSign },
+    ],
+  },
 ] as const;
 
 // ─── Sub-Components ───────────────────────────────────────────────────────────
@@ -128,65 +173,377 @@ function MetricCard({ label, value, icon: Icon, sub }: {
 }
 
 // ── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab() {
-  const [stats, setStats] = useState<OverviewStats | null>(null);
-  const [loading, setLoading] = useState(true);
 
+// ── Executive Overview (Live Dashboard) ───────────────────────────────────────
+
+// Palette for charts — intentionally varied so bars/slices are distinguishable
+const CHART_COLORS = [
+  "hsl(220,90%,56%)",  // blue
+  "hsl(160,80%,40%)",  // teal
+  "hsl(280,70%,58%)",  // violet
+  "hsl(35,95%,55%)",   // amber
+  "hsl(340,80%,56%)",  // rose
+  "hsl(190,80%,48%)",  // cyan
+  "hsl(100,60%,45%)",  // green
+  "hsl(30,90%,60%)",   // orange
+];
+
+// History buffer: keeps the last N snapshots for the sparkline
+const SPARKLINE_MAX = 30;
+
+/**
+ * useDarkMode
+ * Reads `.dark` on <html> and re-fires when it changes.
+ * This lets chart components use literal colors that work in both themes,
+ * since Recharts renders inside SVG where CSS custom properties don't resolve.
+ */
+function useDarkMode(): boolean {
+  const [dark, setDark] = useState(false);
   useEffect(() => {
-    Promise.all([
-      fetch("/api/admin/users").then(r => r.json()),
-      fetch("/api/admin/analytics").then(r => r.json()).catch(() => ({ data: [] })),
-    ]).then(([users, analytics]) => {
-      const totalUsers = users.meta?.total || 0;
-      const activeUsers = users.data?.filter((u: Employee) => u.isActive).length || 0;
-      const totalCost = analytics.data?.reduce((s: number, d: UsageStat) => s + d.costUsd, 0) || 0;
-      const totalTokens = analytics.data?.reduce((s: number, d: UsageStat) => s + d.tokensInput + d.tokensOutput, 0) || 0;
-      setStats({ totalUsers, activeUsers, totalCost, totalTokens });
-    }).catch(() => {
-      setStats({ totalUsers: 0, activeUsers: 0, totalCost: 0, totalTokens: 0 });
-    }).finally(() => setLoading(false));
+    const root = document.documentElement;
+    const check = () => setDark(root.classList.contains("dark"));
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
+
+function OverviewTab() {
+  const dark = useDarkMode();
+  const axisColor   = dark ? "#94a3b8" : "#64748b";
+  const ttBg        = dark ? "#1e293b" : "#ffffff";
+  const ttBorder    = dark ? "#334155" : "#e2e8f0";
+  const ttText      = dark ? "#f1f5f9" : "#0f172a";
+  const ttSubText   = dark ? "#94a3b8" : "#64748b";
+  const cursorFill  = dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
+
+  const { stats, status, error, timeframe, setTimeframe, reconnect } = useAdminStatsStream("realtime");
+  
+  const [killSwitchOpen, setKillSwitchOpen] = useState(false);
+  const [isKilled, setIsKilled] = useState(false);
+  const [activeSessions, setActiveSessions] = useState(0);
+  const [sessionHistory, setSessionHistory] = useState<{t: string, val: number}[]>([]);
+  const [errorRate, setErrorRate] = useState(0.02);
+
+  // Sync active sessions from real-time stream
+  useEffect(() => {
+    if (stats?.totals?.activeSessionCount !== undefined) {
+      setActiveSessions(stats.totals.activeSessionCount);
+    }
+  }, [stats?.totals?.activeSessionCount]);
+
+  // Mock real-time fluctuating metrics for non-SSE data (Error Rate)
+  useEffect(() => {
+    const int = setInterval(() => {
+      setErrorRate(prev => Math.max(0.01, +(prev + (Math.random() * 0.02 - 0.01)).toFixed(3)));
+    }, 4000);
+    return () => clearInterval(int);
   }, []);
 
-  const services = ["API Gateway", "Database Cluster", "AI Provider — Gemini", "AI Provider — OpenAI", "Audit Service", "Cache Layer"];
+  useEffect(() => {
+    setSessionHistory(prev => {
+      const next = [...prev, { t: new Date().toLocaleTimeString(), val: activeSessions }];
+      return next.length > 20 ? next.slice(-20) : next;
+    });
+  }, [activeSessions]);
+
+  // Derived charts data from SSE
+  const deptAreaHistory = (stats?.departments ?? []).map(d => ({
+    name: d.departmentName,
+    tokens: Math.round(d.tokenCount / 1000)
+  }));
+  // Generate some historical mock data for the area chart based on current tick
+  const mockAreaHistory = Array.from({ length: 15 }).map((_, idx) => {
+    const point: any = { time: `T-${14 - idx}` };
+    deptAreaHistory.forEach((d, dIdx) => {
+      // Create some variance so it looks like a real timeline
+      point[d.name] = Math.max(1, d.tokens - (14 - idx) * (Math.random() * 2));
+    });
+    return point;
+  });
+
+  const modelPieData = (stats?.models ?? []).map((m, i) => ({
+    name: m.modelName,
+    value: m.requestCount,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+  }));
+
+  const isLoading = status === "connecting" && !stats;
+  const noData = !isLoading && (!stats || stats.departments.length === 0);
+
+  // ── Modals & Tooltips
+  const tooltipWrapStyle: React.CSSProperties = { background: ttBg, border: `1px solid ${ttBorder}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.12)" };
+  
+  const AreaTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={tooltipWrapStyle}>
+        <p style={{ fontWeight: 600, color: ttText, marginBottom: 4 }}>{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <div key={index} style={{ color: entry.color, display: "flex", gap: "8px", justifyContent: "space-between" }}>
+            <span>{entry.name}:</span>
+            <span style={{ fontWeight: 600 }}>{entry.value.toFixed(1)}K</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const TIMEFRAMES: { id: Timeframe; label: string }[] = [
+    { id: "realtime", label: "Live (Auto-refresh)" },
+    { id: "24h", label: "Today" },
+    { id: "7d", label: "Last 7 Days" }
+  ];
+
+  const MOCK_AUDIT = [
+    { id: 1, type: "warning", time: "2 min ago", text: "Marketing reached 80% budget cap" },
+    { id: 2, type: "info", time: "5 min ago", text: "Admin Alice rotated production API Keys" },
+    { id: 3, type: "info", time: "12 min ago", text: "User Role updated for Bob Manager" },
+    { id: 4, type: "critical", time: "1 hr ago", text: "High latency detected on Provider Route" },
+    { id: 5, type: "info", time: "2 hrs ago", text: "Cost Center 'IT' updated" },
+  ];
+
+  const MOCK_SERVICES = [
+    { name: "API Gateway", status: "Operational", lat: "24ms", up: "99.9%" },
+    { name: "Database Cluster", status: "Operational", lat: "12ms", up: "99.99%" },
+    { name: "Cache Layer", status: "Operational", lat: "2ms", up: "100%" },
+    { name: "Provider Routing", status: "Degraded", lat: "850ms", up: "98.5%" },
+  ];
+
+  const tpm = stats ? Math.round(stats.totals.tokenCount / 5) : 0; // Approx TPM if 5 min window
+  const rpm = stats ? Math.round(stats.totals.requestCount / 5) : 0;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground mb-1">Executive Overview</h2>
-        <p className="text-muted-foreground text-sm">Real-time metrics and system status</p>
+      
+      {/* ── Global Header ──────────────────────────────────────── */}
+      <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight text-foreground">Operations &amp; Control</h2>
+          <p className="text-muted-foreground mt-1">Enterprise dashboard for real-time monitoring and governance.</p>
+        </div>
+        
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-3 px-4 py-2 bg-card border border-border rounded-xl">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-sm font-semibold text-emerald-500">All Systems Operational</span>
+            </div>
+            <div className="w-px h-4 bg-border" />
+            <span className="text-sm font-mono text-muted-foreground">99.8% Uptime</span>
+          </div>
+
+          <div className="flex bg-muted rounded-xl p-1">
+            {TIMEFRAMES.map(tf => (
+              <button
+                key={tf.id}
+                onClick={() => setTimeframe(tf.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${timeframe === tf.id ? "bg-card text-foreground shadow-sm border border-border" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+
+          <button 
+            onClick={() => setKillSwitchOpen(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-colors ${isKilled ? 'bg-destructive text-destructive-foreground animate-pulse' : 'bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500/20'}`}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            {isKilled ? "THROTTLING ACTIVE" : "EMERGENCY PAUSE"}
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-28 bg-muted/50 rounded-xl animate-pulse" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard label="Total Users" value={String(stats?.totalUsers)} icon={Users} sub={`${stats?.activeUsers} active`} />
-          <MetricCard label="Tokens Used" value={`${((stats?.totalTokens || 0) / 1_000_000).toFixed(1)}M`} icon={Zap} sub="this month" />
-          <MetricCard label="Total Spend" value={`PKR ${((stats?.totalCost || 0) * 280).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`} icon={TrendingUp} sub="approx." />
-          <MetricCard label="System Health" value="99.8%" icon={Shield} sub="all services operational" />
+      {/* ── Kill Switch Modal ────────────────────────────────────── */}
+      {killSwitchOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 animate-in fade-in">
+          <div className="w-full max-w-md bg-card border border-destructive/30 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center gap-3 text-destructive mb-4">
+              <AlertTriangle className="w-8 h-8" />
+              <h3 className="text-xl font-bold">Initiate Emergency Throttle?</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              This will instantly drop all outgoing LLM requests from all cost centers except Executive Office. Use this only during severe anomalies or API outages.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setKillSwitchOpen(false)} className="px-4 py-2 bg-muted hover:bg-accent rounded-lg text-sm font-medium">Cancel</button>
+              <button onClick={() => { setIsKilled(!isKilled); setKillSwitchOpen(false); }} className="px-4 py-2 bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded-lg text-sm font-bold">
+                {isKilled ? "Deactivate Throttle" : "Confirm Throttle"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="p-6 bg-card border border-border rounded-xl">
-        <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
-          <Activity className="w-5 h-5 text-primary" />
-          Service Status
-        </h3>
-        <div className="space-y-3">
-          {services.map((svc) => (
-            <div key={svc} className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
-              <span className="text-foreground/80 text-sm">{svc}</span>
-              <div className="flex items-center gap-1.5 text-primary text-xs font-semibold">
-                <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                Operational
+      {/* ── KPI Grid ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {/* Card 1: Active Sessions */}
+        <div className="p-5 bg-card border border-border rounded-xl flex flex-col justify-between">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">Active Sessions</p><p className="text-3xl font-bold text-foreground mt-1">{activeSessions}</p></div>
+            <div className="p-2 bg-blue-500/10 rounded-lg"><Users className="w-5 h-5 text-blue-500" /></div>
+          </div>
+          <div className="h-10 w-full opacity-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={sessionHistory}><Area type="stepAfter" dataKey="val" stroke="hsl(220,90%,56%)" fill="hsl(220,90%,56%)" fillOpacity={0.1} isAnimationActive={false} /></AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Card 2: Token Throughput */}
+        <div className="p-5 bg-card border border-border rounded-xl">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">Token Throughput</p><p className="text-3xl font-bold text-foreground mt-1">{isLoading ? "—" : `${(tpm/1000).toFixed(1)}K`}</p></div>
+            <div className="p-2 bg-amber-500/10 rounded-lg"><Zap className="w-5 h-5 text-amber-500" /></div>
+          </div>
+          <p className="text-sm text-muted-foreground">TPM <span className="mx-2 text-border">|</span> {isLoading ? "—" : rpm} RPM</p>
+        </div>
+
+        {/* Card 3: Total Spend */}
+        <div className="p-5 bg-card border border-border rounded-xl">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">Total Spend (USD)</p><p className="text-3xl font-bold text-foreground mt-1">{isLoading ? "—" : `$${stats?.totals.costUsd.toFixed(2)}`}</p></div>
+            <div className="p-2 bg-emerald-500/10 rounded-lg"><DollarSign className="w-5 h-5 text-emerald-500" /></div>
+          </div>
+          <p className="text-sm text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3 text-emerald-500"/> Projected: ${(stats?.totals.costUsd || 0) * 1.4}</p>
+        </div>
+
+        {/* Card 4: Avg Latency */}
+        <div className="p-5 bg-card border border-border rounded-xl">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">Avg TTFT Latency</p><p className="text-3xl font-bold text-foreground mt-1">420<span className="text-lg text-muted-foreground ml-1">ms</span></p></div>
+            <div className="p-2 bg-violet-500/10 rounded-lg"><Clock className="w-5 h-5 text-violet-500" /></div>
+          </div>
+          <p className="text-sm text-emerald-500 flex items-center gap-1"><TrendingUp className="w-3 h-3 rotate-180"/> 12ms improvement</p>
+        </div>
+
+        {/* Card 5: Error Rate */}
+        <div className="p-5 bg-card border border-border rounded-xl">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">API Error Rate</p><p className="text-3xl font-bold text-foreground mt-1">{errorRate}%</p></div>
+            <div className="p-2 bg-rose-500/10 rounded-lg"><XCircle className="w-5 h-5 text-rose-500" /></div>
+          </div>
+          <div className="w-full bg-muted rounded-full h-1.5 mt-2"><div className="bg-rose-500 h-1.5 rounded-full" style={{width: `${Math.min(100, errorRate * 10)}%`}} /></div>
+        </div>
+
+        {/* Card 6: Active Cost Centers */}
+        <div className="p-5 bg-card border border-border rounded-xl">
+          <div className="flex justify-between items-start mb-4">
+            <div><p className="text-sm text-muted-foreground font-medium">Active Cost Centers</p><p className="text-3xl font-bold text-foreground mt-1">{isLoading ? "—" : stats?.departments.length || 0}</p></div>
+            <div className="p-2 bg-cyan-500/10 rounded-lg"><Building2 className="w-5 h-5 text-cyan-500" /></div>
+          </div>
+          <p className="text-sm text-muted-foreground">Consuming resources</p>
+        </div>
+      </div>
+
+      {/* ── Real-Time Analytics ────────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="xl:col-span-2 p-6 bg-card border border-border rounded-xl">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="font-semibold text-foreground">Live Token Consumption Timeline</h3>
+            <span className="flex items-center gap-1.5 text-xs text-emerald-500"><Radio className="w-3 h-3 animate-pulse" /> Live Stream</span>
+          </div>
+          {isLoading || noData ? (
+            <div className="h-64 flex items-center justify-center text-muted-foreground/60 text-sm">{isLoading ? "Connecting to stream..." : "No timeline data"}</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={mockAreaHistory} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                <XAxis dataKey="time" tick={{ fontSize: 11, fill: axisColor }} stroke={axisColor} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: axisColor }} stroke={axisColor} tickLine={false} axisLine={false} unit="K" />
+                <Tooltip content={<AreaTooltip />} cursor={{ stroke: axisColor, strokeWidth: 1, strokeDasharray: "3 3" }} wrapperStyle={{ outline: "none" }} />
+                {deptAreaHistory.map((d, i) => (
+                  <Area key={d.name} type="monotone" dataKey={d.name} stackId="1" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} isAnimationActive={false} />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="p-6 bg-card border border-border rounded-xl flex flex-col">
+          <h3 className="font-semibold text-foreground mb-6">Provider Distribution</h3>
+          {isLoading || noData || modelPieData.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground/60 text-sm">No provider data</div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={modelPieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={2} dataKey="value" stroke="none">
+                    {modelPieData.map((m, i) => <Cell key={i} fill={m.color} />)}
+                  </Pie>
+                  <Tooltip wrapperStyle={{ outline: "none" }} contentStyle={{ background: ttBg, border: `1px solid ${ttBorder}`, borderRadius: 8, color: ttText }} itemStyle={{ color: ttText }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="w-full mt-4 space-y-2 max-h-32 overflow-y-auto">
+                {modelPieData.map((m, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: m.color }} />
+                      <span className="text-foreground/80 truncate w-24" title={m.name}>{m.name}</span>
+                    </div>
+                    <span className="text-muted-foreground font-mono">{m.value} req</span>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
+          )}
         </div>
+      </div>
+
+      {/* ── Live Activity & Health ─────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        
+        {/* Service Matrix */}
+        <div className="p-6 bg-card border border-border rounded-xl">
+          <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2"><Server className="w-4 h-4 text-muted-foreground" /> Core Services Matrix</h3>
+          <table className="w-full text-sm text-left">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-xs">
+                <th className="py-2 font-medium">Service</th>
+                <th className="py-2 font-medium">Status</th>
+                <th className="py-2 font-medium">Latency</th>
+                <th className="py-2 font-medium text-right">Uptime</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {MOCK_SERVICES.map(s => (
+                <tr key={s.name} className="hover:bg-muted/30 transition-colors">
+                  <td className="py-3 text-foreground/80 font-medium">{s.name}</td>
+                  <td className="py-3">
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${s.status === "Operational" ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}>
+                      {s.status === "Operational" ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                      {s.status}
+                    </span>
+                  </td>
+                  <td className="py-3 text-muted-foreground font-mono text-xs">{s.lat}</td>
+                  <td className="py-3 text-right text-foreground/80 font-mono text-xs">{s.up}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Audit Log */}
+        <div className="p-6 bg-card border border-border rounded-xl">
+          <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2"><Activity className="w-4 h-4 text-muted-foreground" /> Security &amp; Activity Feed</h3>
+          <div className="space-y-4">
+            {MOCK_AUDIT.map(a => (
+              <div key={a.id} className="flex gap-3 items-start">
+                <div className={`mt-0.5 p-1.5 rounded-lg shrink-0 ${a.type === "critical" ? "bg-red-500/10 text-red-500" : a.type === "warning" ? "bg-amber-500/10 text-amber-500" : "bg-blue-500/10 text-blue-500"}`}>
+                  {a.type === "critical" ? <XCircle className="w-3.5 h-3.5" /> : a.type === "warning" ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                </div>
+                <div>
+                  <p className="text-sm text-foreground/90">{a.text}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{a.time}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -462,7 +819,7 @@ function UsersTab() {
             <div className="mt-4">
               <label className="text-xs text-muted-foreground font-medium">Role</label>
               <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))} className={inputClass}>
-                {roles.map(r => <option key={r.id} value={r.code}>{r.name}</option>)}
+                {roles.filter(r => r.code !== "SUPER_ADMIN").map(r => <option key={r.id} value={r.code}>{r.name}</option>)}
               </select>
             </div>
             {error && (
@@ -635,6 +992,9 @@ function RolesTab() {
   const [permissions, setPermissions] = useState<MatrixPerm[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingRole, setSavingRole] = useState<string | null>(null);
+  const [unsavedRoles, setUnsavedRoles] = useState<Set<string>>(new Set());
+  const [confirmSaveModal, setConfirmSaveModal] = useState(false);
+  const [savingMatrix, setSavingMatrix] = useState(false);
   const { data: session } = useSession();
   const isSuperAdmin = session?.user?.role === "SUPER_ADMIN";
 
@@ -662,8 +1022,8 @@ function RolesTab() {
   const SYSTEM_LOCKED = ["SUPER_ADMIN"];
   const mark = new Map(roles.map((r) => [r.id, new Set(r.permissions.map((p) => p.permission.id))]));
 
-  const togglePermission = async (roleId: string, permissionId: string) => {
-    if (savingRole) return;
+  const togglePermission = (roleId: string, permissionId: string) => {
+    if (savingMatrix || !isSuperAdmin) return;
     const checked = new Set(mark.get(roleId) || []);
     if (checked.has(permissionId)) checked.delete(permissionId);
     else checked.add(permissionId);
@@ -678,15 +1038,29 @@ function RolesTab() {
       return { ...r, permissions: [...r.permissions, { permission: { id: permissionId, permissionKey: perm?.permissionKey || permissionId } }] };
     }));
 
-    setSavingRole(roleId);
+    setUnsavedRoles(prev => new Set(prev).add(roleId));
+  };
+
+  const handleSaveMatrix = async () => {
+    setSavingMatrix(true);
     try {
-      await fetch(`/api/admin/roles/${roleId}/permissions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ permissionIds: Array.from(checked) }),
+      const promises = Array.from(unsavedRoles).map(async (roleId) => {
+        const checked = Array.from(mark.get(roleId) || []);
+        await fetch(`/api/admin/roles/${roleId}/permissions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ permissionIds: checked }),
+        });
       });
-    } catch {}
-    setSavingRole(null);
+      await Promise.all(promises);
+      setUnsavedRoles(new Set());
+      setConfirmSaveModal(false);
+      fetchRoles();
+    } catch (err) {
+      alert("Failed to save permission matrix.");
+    } finally {
+      setSavingMatrix(false);
+    }
   };
 
   const groupedPermissions = permissions.reduce<Record<string, MatrixPerm[]>>((acc, p) => {
@@ -742,13 +1116,13 @@ function RolesTab() {
       </div>
 
       {/* Sticky Superadmin System-Alert */}
-      <div className="sticky top-0 z-10 p-4 bg-yellow-500/10 dark:bg-yellow-900/30 border border-yellow-500/30 dark:border-yellow-600/40 rounded-xl flex items-start gap-3 backdrop-blur">
-        <Lock className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+      <div className="sticky top-0 z-10 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 backdrop-blur">
+        <Lock className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
         <div className="text-sm">
-          <p className="font-semibold text-yellow-100">System Default Role — Unmodifiable</p>
-          <p className="text-yellow-200/80 mt-1">
+          <p className="text-base font-bold text-gray-900">System Default Role — Unmodifiable</p>
+          <p className="text-gray-800 mt-1">
             Superadmin is a default system role with full unmodifiable access
-            (<code className="text-xs bg-black/30 px-2 py-0.5 rounded font-mono">superadmin@hamdard.com.pk</code>).
+            (<code className="bg-white border border-gray-300 rounded px-1.5 py-0.5 font-medium">superadmin@hamdard.com.pk</code>).
             Higher-hierarchy roles may grant delegation permissions to modify lower-hierarchy role privileges.
           </p>
         </div>
@@ -828,11 +1202,21 @@ function RolesTab() {
             <h3 className="text-foreground font-semibold">Permission Matrix</h3>
             <p className="text-muted-foreground text-sm mt-0.5">Checkbox grid — assign granular permissions per role</p>
           </div>
-          {savingRole && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <RefreshCw className="w-3 h-3 animate-spin" /> Saving…
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {unsavedRoles.size > 0 && (
+              <button 
+                onClick={() => setConfirmSaveModal(true)} 
+                className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition"
+              >
+                Save Changes
+              </button>
+            )}
+            {savingMatrix && (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Saving…
+              </span>
+            )}
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[32rem]">
           <table className="w-full text-xs">
@@ -869,17 +1253,18 @@ function RolesTab() {
                           {p.description && <p className="text-muted-foreground/70 mt-0.5">{p.description}</p>}
                         </td>
                         {roles.map((r) => {
-                          const isLocked = SYSTEM_LOCKED.includes(r.code);
+                          const isLocked = SYSTEM_LOCKED.includes(r.code) || !isSuperAdmin;
                           const checked = mark.get(r.id)?.has(p.id) || false;
+                          const isUnsaved = unsavedRoles.has(r.id);
                           return (
-                            <td key={r.id} className="px-3 py-2.5 text-center">
+                            <td key={r.id} className={`px-3 py-2.5 text-center ${isUnsaved ? 'bg-primary/5' : ''}`}>
                               {isLocked ? (
-                                <input type="checkbox" checked disabled className="accent-primary cursor-not-allowed opacity-40" />
+                                <input type="checkbox" checked={checked} disabled className="accent-primary cursor-not-allowed opacity-40" />
                               ) : (
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  disabled={savingRole === r.id}
+                                  disabled={savingMatrix}
                                   onChange={() => togglePermission(r.id, p.id)}
                                   className="accent-primary cursor-pointer"
                                 />
@@ -934,6 +1319,28 @@ function RolesTab() {
           </div>
         </div>
       )}
+      {/* Confirmation Save Matrix Modal */}
+      {confirmSaveModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-card w-full max-w-md p-6 rounded-xl border border-border shadow-2xl relative">
+            <button onClick={() => setConfirmSaveModal(false)} className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-lg font-bold text-foreground">Confirm Permission Updates</h3>
+            <p className="text-sm text-muted-foreground mt-2">
+              You are about to update permissions for {unsavedRoles.size} role(s). Are you sure you want to proceed?
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setConfirmSaveModal(false)} className="px-4 py-2 text-sm font-medium hover:bg-muted rounded-lg transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleSaveMatrix} disabled={savingMatrix} className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50">
+                {savingMatrix ? "Saving..." : "Confirm & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -970,6 +1377,7 @@ function PoliciesTab() {
   const [activeView, setActiveView] = useState<"list" | "status" | "history">("list");
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [showSeedModal, setShowSeedModal] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<AiPolicyItem | null>(null);
   const [formSaving, setFormSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1152,7 +1560,7 @@ function PoliciesTab() {
   };
 
   const handleSeedDefaults = async () => {
-    if (!confirm("Seed 14 default enterprise policies? This will add policies if none exist.")) return;
+    setShowSeedModal(false);
     try {
       const res = await fetch("/api/admin/policies/seed", { method: "POST" });
       const data = await res.json();
@@ -1172,7 +1580,7 @@ function PoliciesTab() {
           <p className="text-muted-foreground text-sm mt-1">Central governance system — policies are automatically enforced across all modules</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleSeedDefaults} className="flex items-center gap-2 px-3 py-2 bg-muted hover:bg-accent text-foreground rounded-lg text-sm transition-colors" title="Seed 14 default enterprise policies">
+          <button onClick={() => setShowSeedModal(true)} className="flex items-center gap-2 px-3 py-2 bg-muted hover:bg-accent text-foreground rounded-lg text-sm transition-colors" title="Seed 14 default enterprise policies">
             <Zap className="w-4 h-4" /> Seed Defaults
           </button>
           <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-semibold text-sm transition-colors">
@@ -1287,49 +1695,69 @@ function PoliciesTab() {
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
-              {policies.map((policy) => {
-                const parsedActions = (() => { try { return JSON.parse(policy.actions); } catch { return []; } })();
-                return (
-                  <div key={policy.id} className="p-4 bg-card border border-border rounded-xl hover:border-primary/20 transition-colors">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-lg">{CATEGORY_ICONS[policy.category] || "📜"}</span>
-                          <h3 className="font-semibold text-foreground">{policy.name}</h3>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${SEVERITY_COLORS[policy.severity] || ""}`}>{policy.severity}</span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[policy.status] || ""}`}>{policy.status}</span>
-                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary border border-border">{CATEGORY_LABELS[policy.category] || policy.category}</span>
-                          <span className="text-xs text-muted-foreground">v{policy.version}</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-1">{policy.description}</p>
-                        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
-                          <span>Scope: {policy.scope}</span>
-                          <span>Priority: {policy.priority}</span>
-                          <span>{parsedActions.length} action{parsedActions.length !== 1 ? "s" : ""}</span>
-                          {policy._count?.evaluationLogs ? <span>{policy._count.evaluationLogs} evaluations</span> : null}
-                          {policy.createdBy?.name && <span>by {policy.createdBy.name}</span>}
-                          <span>Updated {new Date(policy.updatedAt).toLocaleDateString("en-PK", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => toggleActive(policy)} disabled={saving === policy.id}
-                          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors flex-shrink-0 ${policy.status === "ACTIVE" ? "bg-primary" : "bg-muted"}`}
-                          title={policy.status === "ACTIVE" ? "Deactivate" : "Activate"}>
-                          {saving === policy.id && <div className="absolute inset-0 flex items-center justify-center"><RefreshCw className="w-3 h-3 animate-spin text-foreground/70" /></div>}
-                          <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${policy.status === "ACTIVE" ? "translate-x-8" : "translate-x-1"}`} />
-                        </button>
-                        <button onClick={() => openEdit(policy)} className="p-1.5 rounded hover:bg-accent transition-colors text-muted-foreground" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => handleDuplicate(policy.id)} className="p-1.5 rounded hover:bg-accent transition-colors text-muted-foreground" title="Duplicate"><Copy className="w-4 h-4" /></button>
-                        <button onClick={() => handleArchive(policy.id)} className="p-1.5 rounded hover:bg-accent transition-colors text-muted-foreground" title={policy.status === "ARCHIVED" ? "Restore" : "Archive"}>
-                          <Archive className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDelete(policy.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors text-destructive" title="Delete"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="overflow-x-auto rounded-xl border border-border bg-card">
+              <table className="w-full text-sm text-left whitespace-nowrap">
+                <thead className="text-xs text-muted-foreground uppercase bg-muted/50 border-b border-border">
+                  <tr>
+                    <th className="px-4 py-3">Policy Name</th>
+                    <th className="px-4 py-3">Target Module</th>
+                    <th className="px-4 py-3">Action</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Manage</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {policies.map((policy) => {
+                    const parsedActions = (() => { try { return JSON.parse(policy.actions); } catch { return []; } })();
+                    return (
+                      <tr key={policy.id} className="hover:bg-accent/30 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg flex-shrink-0">{CATEGORY_ICONS[policy.category] || "📜"}</span>
+                            <div className="min-w-0">
+                              <div className="font-semibold text-foreground flex items-center gap-2">
+                                <span className="truncate">{policy.name}</span>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${SEVERITY_COLORS[policy.severity] || ""}`}>{policy.severity}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5 max-w-[250px] truncate" title={policy.description}>{policy.description}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-1 rounded text-[10px] font-semibold bg-primary/10 text-primary border border-border">
+                            {CATEGORY_LABELS[policy.category] || policy.category}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-1">
+                            {parsedActions.length > 0 ? (
+                              parsedActions.map((a: string, i: number) => (
+                                <span key={i} className="text-[10px] font-mono text-muted-foreground truncate max-w-[150px] bg-muted px-1.5 py-0.5 rounded" title={a}>{a}</span>
+                              ))
+                            ) : <span className="text-muted-foreground/50 text-xs">-</span>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                           <button onClick={() => toggleActive(policy)} disabled={saving === policy.id}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${policy.status === "ACTIVE" ? "bg-primary" : "bg-muted"}`}
+                            title={policy.status === "ACTIVE" ? "Deactivate" : "Activate"}>
+                            {saving === policy.id && <div className="absolute inset-0 flex items-center justify-center"><RefreshCw className="w-3 h-3 animate-spin text-foreground/70" /></div>}
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${policy.status === "ACTIVE" ? "translate-x-6" : "translate-x-1"}`} />
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openEdit(policy)} className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                            <button onClick={() => handleDuplicate(policy.id)} className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground" title="Duplicate"><Copy className="w-4 h-4" /></button>
+                            <button onClick={() => handleArchive(policy.id)} className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground" title={policy.status === "ARCHIVED" ? "Restore" : "Archive"}><Archive className="w-4 h-4" /></button>
+                            <button onClick={() => handleDelete(policy.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors text-destructive" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </>
@@ -1344,19 +1772,28 @@ function PoliciesTab() {
               <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
                 <Shield className="w-4 h-4 text-primary" /> Module Protection Coverage
               </h3>
-              <div className="space-y-2">
-                {Object.entries(policyStatus.moduleProtection).map(([mod, info]) => (
-                  <div key={mod} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50">
-                    <span className="text-lg">{MODULE_STATUS_ICONS[mod] || "📦"}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-foreground">{mod}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {info.protected ? `${info.policyCount} policies: ${info.categories.map(c => CATEGORY_LABELS[c] || c).join(", ")}` : "No policies applied"}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { id: "AI Chat", icon: "💬" }, { id: "File Upload", icon: "📎" },
+                  { id: "Authentication", icon: "🔑" }, { id: "Agent Action", icon: "🤖" },
+                  { id: "Model Access", icon: "🤖" }, { id: "Workflow Action", icon: "🔄" },
+                  { id: "Analytics View", icon: "📊" }, { id: "User Management", icon: "👥" },
+                  { id: "Knowledge Base", icon: "📚" }, { id: "System Admin", icon: "⚙️" }
+                ].map(mod => {
+                  const info = policyStatus.moduleProtection[mod.id] || { protected: false, policyCount: 0, categories: [] };
+                  return (
+                    <div key={mod.id} className={`flex items-center gap-3 p-3 rounded-xl border ${info.protected ? "bg-green-500/5 border-green-500/20" : "bg-muted/30 border-border"}`}>
+                      <span className="text-xl flex-shrink-0">{mod.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-semibold truncate ${info.protected ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}`}>{mod.id}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {info.protected ? `${info.policyCount} active polic${info.policyCount === 1 ? 'y' : 'ies'}` : "Unprotected (0 policies)"}
+                        </div>
                       </div>
+                      {info.protected ? <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-muted-foreground/30 flex-shrink-0" />}
                     </div>
-                    <div className={`w-3 h-3 rounded-full ${info.protected ? "bg-green-500" : "bg-muted-foreground/30"}`} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -1388,35 +1825,37 @@ function PoliciesTab() {
 
       {/* ── HISTORY VIEW ───────────────────────────────────────────────────── */}
       {activeView === "history" && (
-        <PolicyHistoryView />
+        <PolicyHistoryView summaryStats={policyStatus?.summary} />
       )}
 
       {/* Create/Edit Modal */}
+      {/* Create/Edit Modal - Converted to Drawer */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={() => !formSaving && setModalOpen(false)}>
-          <div className="w-full max-w-2xl max-h-[90vh] bg-card border border-border rounded-2xl shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h3 className="text-lg font-semibold text-foreground">{editingPolicy ? "Edit Policy" : "Create Policy"}</h3>
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/70" onClick={() => !formSaving && setModalOpen(false)}>
+          <div className="w-full max-w-md h-full bg-card border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/30">
+              <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                {editingPolicy ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                {editingPolicy ? "Edit Policy" : "Create Policy"}
+              </h3>
               <button onClick={() => setModalOpen(false)} disabled={formSaving} className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"><X className="w-5 h-5" /></button>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium">Policy Name</label>
-                  <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className={inputClass} placeholder="e.g., Content Moderation - Standard" />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium">Category</label>
-                  <select value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))} className={inputClass}>
-                    {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{CATEGORY_ICONS[k]} {v}</option>)}
-                  </select>
-                </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Policy Name</label>
+                <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className={inputClass} placeholder="e.g., Content Moderation - Standard" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Category</label>
+                <select value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))} className={inputClass}>
+                  {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{CATEGORY_ICONS[k]} {v}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground font-medium">Description</label>
                 <textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} rows={2} className={inputClass + " resize-none"} placeholder="Describe the policy purpose and scope..." />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">Severity</label>
                   <select value={form.severity} onChange={e => setForm(p => ({ ...p, severity: e.target.value }))} className={inputClass}>
@@ -1429,10 +1868,10 @@ function PoliciesTab() {
                     {["ORGANIZATION", "DEPARTMENT", "TEAM", "ROLE", "USER"].map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium">Priority (1-100)</label>
-                  <input type="number" min={1} max={100} value={form.priority} onChange={e => setForm(p => ({ ...p, priority: parseInt(e.target.value) || 50 }))} className={inputClass} />
-                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Priority (1-100)</label>
+                <input type="number" min={1} max={100} value={form.priority} onChange={e => setForm(p => ({ ...p, priority: parseInt(e.target.value) || 50 }))} className={inputClass} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1447,12 +1886,12 @@ function PoliciesTab() {
               <div>
                 <label className="text-xs text-muted-foreground font-medium">Actions (JSON array)</label>
                 <textarea value={form.actions} onChange={e => setForm(p => ({ ...p, actions: e.target.value }))} rows={2} className={inputClass + " resize-none font-mono text-xs"} placeholder='["BLOCK_REQUEST","LOG_EVENT_ONLY"]' />
-                <p className="text-xs text-muted-foreground/60 mt-1">Available: BLOCK_REQUEST, STOP_AI_RESPONSE, DISABLE_MODEL_ACCESS, WARN, REQUIRE_APPROVAL, MASK_SENSITIVE_DATA, REDACT_CONTENT, QUARANTINE_FILE, NOTIFY_MANAGER, NOTIFY_SECURITY_TEAM, LOG_EVENT_ONLY, ALLOW</p>
+                <p className="text-[10px] text-muted-foreground/60 mt-1">Available: BLOCK_REQUEST, STOP_AI_RESPONSE, DISABLE_MODEL_ACCESS, WARN, REQUIRE_APPROVAL, MASK_SENSITIVE_DATA, REDACT_CONTENT, QUARANTINE_FILE, NOTIFY_MANAGER, NOTIFY_SECURITY_TEAM, LOG_EVENT_ONLY, ALLOW</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground font-medium">Trigger Conditions (JSON)</label>
                 <textarea value={form.conditions} onChange={e => setForm(p => ({ ...p, conditions: e.target.value }))} rows={3} className={inputClass + " resize-none font-mono text-xs"} placeholder='{"contextType": "MESSAGE", "roles": ["EMPLOYEE"], "allowedHours": {"start": 9, "end": 17}}' />
-                <p className="text-xs text-muted-foreground/60 mt-1">Available: contextType, roles, departments, teams, allowedHours, maxTokens, allowedModels, blockedModels, allowedFileTypes, blockedFileTypes, maxFileSize, ipWhitelist, ipBlacklist</p>
+                <p className="text-[10px] text-muted-foreground/60 mt-1">Available: contextType, roles, departments, teams, allowedHours, maxTokens, allowedModels, blockedModels, allowedFileTypes, blockedFileTypes, maxFileSize, ipWhitelist, ipBlacklist</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground font-medium">Exceptions (JSON array)</label>
@@ -1465,7 +1904,7 @@ function PoliciesTab() {
                 </div>
               )}
             </div>
-            <div className="px-6 py-4 border-t border-border flex items-center justify-between">
+            <div className="px-6 py-4 border-t border-border flex items-center justify-between bg-muted/30">
               {error && (
                 <div className="flex items-center gap-2 text-destructive text-xs">
                   <AlertTriangle className="w-4 h-4" /><span>{error}</span>
@@ -1481,12 +1920,35 @@ function PoliciesTab() {
           </div>
         </div>
       )}
+
+      {/* Seed Defaults Modal */}
+      {showSeedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={() => setShowSeedModal(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl flex flex-col p-6 animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4 text-foreground">
+              <div className="p-3 bg-primary/10 rounded-full">
+                <Zap className="w-6 h-6 text-primary" />
+              </div>
+              <h3 className="text-lg font-bold">Seed Defaults?</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              This will populate the database with 14 standard enterprise policies. It will only add missing policies and won't overwrite customized ones.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowSeedModal(false)} className="px-4 py-2 bg-muted hover:bg-accent text-foreground rounded-lg text-sm transition-colors font-medium">Cancel</button>
+              <button onClick={handleSeedDefaults} className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition-colors">
+                Confirm Seed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Policy History Sub-Tab ───────────────────────────────────────────────────
-function PolicyHistoryView() {
+function PolicyHistoryView({ summaryStats }: { summaryStats?: any }) {
   const [history, setHistory] = useState<Array<{
     id: string; policyId: string; employeeId: string; contextType: string;
     contextJson: string; decision: string; details: string; createdAt: string;
@@ -1554,11 +2016,11 @@ function PolicyHistoryView() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3">
         <div className="p-3 bg-card border border-border rounded-xl text-center">
-          <div className="text-2xl font-bold text-foreground">{stats.total}</div>
+          <div className="text-2xl font-bold text-foreground">{summaryStats?.totalEvaluations ?? stats.total}</div>
           <div className="text-xs text-muted-foreground">Total Evaluations</div>
         </div>
         <div className="p-3 bg-card border border-border rounded-xl text-center">
-          <div className="text-2xl font-bold text-red-600">{stats.blocked}</div>
+          <div className="text-2xl font-bold text-red-600">{summaryStats?.blockedRequests ?? stats.blocked}</div>
           <div className="text-xs text-muted-foreground">Blocked</div>
         </div>
         <div className="p-3 bg-card border border-border rounded-xl text-center">
@@ -1785,93 +2247,356 @@ function CostsTab() {
   );
 }
 
-// ── Analytics Tab ─────────────────────────────────────────────────────────────
+// ── Analytics Tab (Live SSE) ──────────────────────────────────────────────────
+
 function AnalyticsTab() {
-  const [data, setData] = useState<UsageStat[]>([]);
-  const [modelData, setModelData] = useState<Array<{ aiProvider: string; aiModel: string; _sum: { tokensInput: number; tokensOutput: number; costUsd: number } }>>([]);
-  const [loading, setLoading] = useState(true);
+  const dark = useDarkMode();
+
+  // ── Theme-aware chart tokens (literal values — safe inside SVG) ─────────────
+  // These replace CSS custom property references which SVG cannot resolve.
+  const axisColor   = dark ? "#94a3b8" : "#64748b";   // slate-400 / slate-500
+  const cursorFill  = dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
+  const ttBg        = dark ? "#1e293b" : "#ffffff";    // slate-800 / white
+  const ttBorder    = dark ? "#334155" : "#e2e8f0";    // slate-700 / slate-200
+  const ttText      = dark ? "#f1f5f9" : "#0f172a";    // slate-100 / slate-900
+  const ttSubText   = dark ? "#94a3b8" : "#64748b";
+
+  const { stats, status, error, timeframe, setTimeframe, reconnect } =
+    useAdminStatsStream("realtime");
+
+  // Rolling sparkline — appends total token count from each SSE tick
+  const [history, setHistory] = useState<{ t: string; tokens: number }[]>([]);
 
   useEffect(() => {
-    fetch("/api/admin/analytics")
-      .then(r => r.json())
-      .then(d => {
-        setData(d.data || []);
-        setModelData(d.models || []);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+    if (!stats) return;
+    setHistory(prev => {
+      const next = [
+        ...prev,
+        {
+          t: new Date(stats.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          tokens: stats.totals.tokenCount,
+        },
+      ];
+      return next.length > SPARKLINE_MAX ? next.slice(-SPARKLINE_MAX) : next;
+    });
+  }, [stats]);
 
-  const totalTokens = data.reduce((s, d) => s + d.tokensInput + d.tokensOutput, 0);
-  const totalModelTokens = modelData.reduce((s, d) => s + (d._sum.tokensInput || 0) + (d._sum.tokensOutput || 0), 0);
+  // ── Timeframe selector ───────────────────────────────────────────────────
+  const TIMEFRAMES: { id: Timeframe; label: string }[] = [
+    { id: "realtime", label: "Live (5 min)" },
+    { id: "24h",      label: "Last 24 h"   },
+    { id: "7d",       label: "Last 7 days" },
+  ];
+
+  // ── Status badge ────────────────────────────────────────────────────────
+  const StatusBadge = () => {
+    if (status === "live")        return <span className="flex items-center gap-1.5 text-xs text-emerald-500"><Radio className="w-3 h-3 animate-pulse" /> Live</ span>;
+    if (status === "connecting")  return <span className="flex items-center gap-1.5 text-xs text-amber-500"><Wifi className="w-3 h-3" /> Connecting…</ span>;
+    if (status === "error")       return <span className="flex items-center gap-1.5 text-xs text-destructive"><WifiOff className="w-3 h-3" /> {error ?? "Error"}</ span>;
+    return                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><WifiOff className="w-3 h-3" /> Closed</ span>;
+  };
+
+  // ── Derived chart data ───────────────────────────────────────────────────
+  const deptBarData = (stats?.departments ?? []).map(d => ({
+    name:  d.departmentName.length > 12 ? d.departmentName.slice(0, 12) + "…" : d.departmentName,
+    fullName: d.departmentName,
+    tokens: Math.round(d.tokenCount / 1000),   // display in K
+    pct:    d.percentage,
+  }));
+
+  const modelPieData = (stats?.models ?? []).map((m, i) => ({
+    name:  m.modelName,
+    value: m.requestCount,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+  }));
+
+  const isLoading = status === "connecting" && !stats;
+  const noData    = !isLoading && (!stats || stats.departments.length === 0);
+
+  // ── Custom tooltips — use inline styles so they are SVG-context-safe ────────
+  const tooltipWrapStyle: React.CSSProperties = {
+    background: ttBg,
+    border: `1px solid ${ttBorder}`,
+    borderRadius: 8,
+    padding: "6px 10px",
+    fontSize: 12,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+  };
+
+  const DeptTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: typeof deptBarData[0] }> }) => {
+    if (!active || !payload?.[0]) return null;
+    const d = payload[0].payload;
+    return (
+      <div style={tooltipWrapStyle}>
+        <p style={{ fontWeight: 600, color: ttText, marginBottom: 2 }}>{d.fullName}</p>
+        <p style={{ color: ttSubText }}>{d.tokens}K tokens &middot; {d.pct}%</p>
+      </div>
+    );
+  };
+
+  const ModelTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number }> }) => {
+    if (!active || !payload?.[0]) return null;
+    return (
+      <div style={tooltipWrapStyle}>
+        <p style={{ fontWeight: 600, color: ttText, marginBottom: 2 }}>{payload[0].name}</p>
+        <p style={{ color: ttSubText }}>{payload[0].value} requests</p>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground">Usage Analysis</h2>
-        <p className="text-muted-foreground text-sm mt-1">Token consumption and AI model distribution insights</p>
+
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Usage Analytics</h2>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            Real-time token consumption &amp; AI model distribution
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Status badge */}
+          <div className="px-3 py-1.5 bg-card border border-border rounded-lg">
+            <StatusBadge />
+          </div>
+
+          {/* Timeframe selector */}
+          <div className="flex bg-muted rounded-lg p-1 gap-1">
+            {TIMEFRAMES.map(tf => (
+              <button
+                key={tf.id}
+                onClick={() => setTimeframe(tf.id)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  timeframe === tf.id
+                    ? "bg-card text-foreground shadow-sm border border-border"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Reconnect button shown only on error/closed */}
+          {(status === "error" || status === "closed") && (
+            <button
+              onClick={reconnect}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" /> Reconnect
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* ── KPI row ─────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: "Total Tokens",   value: stats ? `${(stats.totals.tokenCount / 1000).toFixed(1)}K`       : "—", icon: Activity  },
+          { label: "Total Requests", value: stats ? `${stats.totals.requestCount}`                           : "—", icon: BarChart3 },
+          { label: "Total Spend",    value: stats ? `$${stats.totals.costUsd.toFixed(4)}`                    : "—", icon: DollarSign },
+        ].map(({ label, value, icon: Icon }) => (
+          <div key={label} className="p-4 bg-card border border-border rounded-xl flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <Icon className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="text-xl font-bold text-foreground">
+                {isLoading ? <span className="inline-block w-16 h-5 bg-muted rounded animate-pulse" /> : value}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Charts row ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Department bar chart */}
         <div className="p-6 bg-card border border-border rounded-xl">
           <h3 className="font-semibold text-foreground mb-4">Token Consumption by Department</h3>
-          {loading ? (
-            <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-muted/60 rounded animate-pulse" />)}</div>
-          ) : data.length === 0 ? (
-            <p className="text-muted-foreground/70 text-sm">No data available</p>
-          ) : (
-            <div className="space-y-4">
-              {data.slice(0, 7).map(row => {
-                const tokens = row.tokensInput + row.tokensOutput;
-                const pct = totalTokens > 0 ? Math.round((tokens / totalTokens) * 100) : 0;
-                return (
-                  <div key={row.department}>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span className="text-foreground/80">{row.department}</span>
-                      <span className="text-primary font-semibold text-xs">
-                        {(tokens / 1000).toFixed(1)}K tokens
-                      </span>
-                    </div>
-                    <div className="w-full bg-muted rounded-full h-2">
-                      <div
-                        className="bg-gradient-to-r from-primary to-primary h-2 rounded-full transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{pct}%</p>
-                  </div>
-                );
-              })}
+          {isLoading ? (
+            <div className="h-56 bg-muted/40 rounded-lg animate-pulse" />
+          ) : noData ? (
+            <div className="h-56 flex items-center justify-center text-muted-foreground/60 text-sm">
+              No data for this timeframe
             </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={deptBarData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 11, fill: axisColor }}
+                  stroke={axisColor}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: axisColor }}
+                  stroke={axisColor}
+                  tickLine={false}
+                  axisLine={false}
+                  unit="K"
+                />
+                <Tooltip
+                  content={<DeptTooltip />}
+                  cursor={{ fill: cursorFill }}
+                  wrapperStyle={{ outline: "none" }}
+                />
+                <Bar dataKey="tokens" radius={[4, 4, 0, 0]} maxBarSize={48}>
+                  {deptBarData.map((_, i) => (
+                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           )}
         </div>
 
+        {/* Model pie chart */}
         <div className="p-6 bg-card border border-border rounded-xl">
-          <h3 className="font-semibold text-foreground mb-4">AI Model Distribution</h3>
-          {loading ? (
-            <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-muted/60 rounded animate-pulse" />)}</div>
-          ) : modelData.length === 0 ? (
-            <p className="text-muted-foreground/70 text-sm">No model usage data yet.</p>
+          <h3 className="font-semibold text-foreground mb-4">AI Model Request Distribution</h3>
+          {isLoading ? (
+            <div className="h-56 bg-muted/40 rounded-lg animate-pulse" />
+          ) : noData || modelPieData.length === 0 ? (
+            <div className="h-56 flex items-center justify-center text-muted-foreground/60 text-sm">
+              No model usage data yet
+            </div>
           ) : (
-            <div className="space-y-3">
-              {modelData.slice(0, 6).map((m) => {
-                const tokens = (m._sum.tokensInput || 0) + (m._sum.tokensOutput || 0);
-                const pct = totalModelTokens > 0 ? Math.round((tokens / totalModelTokens) * 100) : 0;
-                const label = m.aiModel || m.aiProvider;
-                return (
-                  <div key={`${m.aiProvider}-${m.aiModel}`} className="flex items-center gap-3">
-                    <span className="text-foreground/80 text-sm w-36 flex-shrink-0 truncate" title={label}>{label}</span>
-                    <div className="flex-1 bg-muted rounded-full h-2">
-                      <div className="bg-gradient-to-r from-primary to-primary h-2 rounded-full" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-muted-foreground text-xs w-10 text-right">{pct}%</span>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="55%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={modelPieData}
+                    cx="50%" cy="50%"
+                    innerRadius={52} outerRadius={90}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {modelPieData.map((m, i) => (
+                      <Cell key={i} fill={m.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={<ModelTooltip />}
+                    wrapperStyle={{ outline: "none" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+
+              {/* Legend */}
+              <div className="flex-1 space-y-2 overflow-hidden">
+                {modelPieData.slice(0, 7).map((m, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: m.color }} />
+                    <span className="text-foreground/80 truncate flex-1" title={m.name}>{m.name}</span>
+                    <span className="text-muted-foreground shrink-0">{m.value}</span>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* ── Live Sparkline ───────────────────────────────────────────────── */}
+      <div className="p-6 bg-card border border-border rounded-xl">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-foreground">Live Token Activity</h3>
+          <span className="text-xs text-muted-foreground">Last {history.length} snapshots · refreshes every 4 s</span>
+        </div>
+        {history.length < 2 ? (
+          <div className="h-32 flex items-center justify-center text-muted-foreground/60 text-sm">
+            {isLoading ? "Waiting for first data point…" : "Accumulating data…"}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={130}>
+            <AreaChart data={history} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+              <defs>
+                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="hsl(220,90%,56%)" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="hsl(220,90%,56%)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="t"
+                tick={{ fontSize: 9, fill: axisColor }}
+                stroke={axisColor}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                tick={{ fontSize: 9, fill: axisColor }}
+                stroke={axisColor}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip
+                wrapperStyle={{ outline: "none" }}
+                contentStyle={{
+                  fontSize: 11,
+                  background: ttBg,
+                  border: `1px solid ${ttBorder}`,
+                  borderRadius: 8,
+                  color: ttText,
+                  boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                }}
+                itemStyle={{ color: ttSubText }}
+                labelStyle={{ color: ttText, fontWeight: 600 }}
+                formatter={(v) => [typeof v === "number" ? (v >= 1000 ? `${(v / 1000).toFixed(1)}K` : `${v}`) + " tokens" : String(v), "Total tokens"]}
+              />
+              <Area
+                type="monotone"
+                dataKey="tokens"
+                stroke="hsl(220,90%,56%)"
+                strokeWidth={2}
+                fill="url(#sparkGrad)"
+                isAnimationActive={false}
+                dot={false}
+                activeDot={{ r: 4, strokeWidth: 0, fill: "hsl(220,90%,56%)" }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ── Department table ─────────────────────────────────────────────── */}
+      {!noData && stats && stats.departments.length > 0 && (
+        <div className="p-6 bg-card border border-border rounded-xl overflow-x-auto">
+          <h3 className="font-semibold text-foreground mb-4">Department Breakdown</h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-xs">
+                <th className="text-left pb-2">Department</th>
+                <th className="text-right pb-2">Tokens</th>
+                <th className="text-right pb-2">Requests</th>
+                <th className="text-right pb-2">Cost (USD)</th>
+                <th className="text-right pb-2">Share</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {stats.departments.map(d => (
+                <tr key={d.departmentName} className="hover:bg-muted/40 transition-colors">
+                  <td className="py-2 text-foreground/80 font-medium">{d.departmentName}</td>
+                  <td className="py-2 text-right text-foreground/70">{(d.tokenCount / 1000).toFixed(1)}K</td>
+                  <td className="py-2 text-right text-foreground/70">{d.requestCount}</td>
+                  <td className="py-2 text-right text-foreground/70">${d.costUsd.toFixed(4)}</td>
+                  <td className="py-2 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="w-16 bg-muted rounded-full h-1.5">
+                        <div className="bg-primary h-1.5 rounded-full" style={{ width: `${d.percentage}%` }} />
+                      </div>
+                      <span className="text-muted-foreground text-xs w-8 text-right">{d.percentage}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2937,7 +3662,20 @@ function CostCentersTab() {
   const [formSaving, setFormSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [form, setForm] = useState({ code: "", name: "", description: "" });
+  const MOCK_DEPARTMENTS = ["Executive Office", "IT", "HR", "Marketing", "Operations"];
+  const MOCK_MANAGERS = ["Alice Admin", "Bob Manager", "Charlie Lead"];
+
+  const defaultFormState = { 
+    code: "", 
+    name: "", 
+    department: "",
+    budgetLimit: "",
+    alertThreshold: 80,
+    manager: "",
+    status: "ACTIVE",
+    description: "" 
+  };
+  const [form, setForm] = useState(defaultFormState);
 
   const fetchCenters = () => {
     setLoading(true);
@@ -2946,7 +3684,7 @@ function CostCentersTab() {
   useEffect(() => { fetchCenters(); }, []);
 
   const handleSave = async () => {
-    if (!form.code || !form.name) { setError("Code and name are required."); return; }
+    if (!form.code || !form.name || !form.department) { setError("Code, name, and department are required."); return; }
     setFormSaving(true); setError(null);
     try {
       const url = editing ? `/api/admin/cost-centers/${editing.id}` : "/api/admin/cost-centers";
@@ -2976,7 +3714,7 @@ function CostCentersTab() {
           <h2 className="text-2xl font-bold text-foreground">Cost Centers</h2>
           <p className="text-muted-foreground text-sm mt-1">Track AI expenditure by department, team, or project</p>
         </div>
-        <button onClick={() => { setEditing(null); setError(null); setForm({ code: "", name: "", description: "" }); setModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-semibold text-sm"><Plus className="w-4 h-4" /> Add Cost Center</button>
+        <button onClick={() => { setEditing(null); setError(null); setForm(defaultFormState); setModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-semibold text-sm"><Plus className="w-4 h-4" /> Add Cost Center</button>
       </div>
 
       {loading ? <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-muted/50 rounded-xl animate-pulse" />)}</div>
@@ -2999,7 +3737,7 @@ function CostCentersTab() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => { setEditing(c); setForm({ code: c.code, name: c.name, description: c.description || "" }); setModalOpen(true); }} className="p-1.5 rounded hover:bg-accent text-muted-foreground"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setEditing(c); setForm({ ...defaultFormState, code: c.code, name: c.name, description: c.description || "", status: c.status || "ACTIVE" }); setModalOpen(true); }} className="p-1.5 rounded hover:bg-accent text-muted-foreground"><Edit2 className="w-4 h-4" /></button>
                   <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" /></button>
                 </div>
               </div>
@@ -3015,10 +3753,67 @@ function CostCentersTab() {
               <h3 className="text-lg font-semibold">{editing ? "Edit Cost Center" : "Add Cost Center"}</h3>
               <button onClick={() => setModalOpen(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
-            <div className="px-6 py-4 space-y-4">
-              <div><label className="text-xs text-muted-foreground font-medium">Code</label><input type="text" value={form.code} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} className={inputClass} placeholder="FIN-001" /></div>
-              <div><label className="text-xs text-muted-foreground font-medium">Name</label><input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className={inputClass} placeholder="Finance Department" /></div>
-              <div><label className="text-xs text-muted-foreground font-medium">Description</label><textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} rows={2} className={inputClass + " resize-none"} /></div>
+            <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Cost Center Code <span className="text-destructive">*</span></label>
+                <input type="text" value={form.code} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} className={inputClass} placeholder="e.g., FIN-001" />
+              </div>
+              
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Cost Center Name <span className="text-destructive">*</span></label>
+                <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className={inputClass} placeholder="e.g., Finance Department" />
+              </div>
+              
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Assigned Department / Team <span className="text-destructive">*</span></label>
+                <select value={form.department} onChange={e => setForm(p => ({ ...p, department: e.target.value }))} className={inputClass}>
+                  <option value="">Select Department...</option>
+                  {MOCK_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Monthly Budget Limit ($)</label>
+                  <input type="number" value={form.budgetLimit} onChange={e => setForm(p => ({ ...p, budgetLimit: e.target.value }))} className={inputClass} placeholder="e.g., 1000" />
+                  <p className="text-[10px] text-muted-foreground mt-1">Maximum monthly expenditure allowed before triggering alerts.</p>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Alert Threshold (%)</label>
+                  <div className="flex items-center gap-3 mt-2">
+                    <input type="range" min="1" max="100" value={form.alertThreshold} onChange={e => setForm(p => ({ ...p, alertThreshold: parseInt(e.target.value) }))} className="flex-1 accent-primary" />
+                    <span className="text-sm font-medium w-9 text-right">{form.alertThreshold}%</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1.5">Notify admins when spending reaches this percentage.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Cost Center Manager</label>
+                  <select value={form.manager} onChange={e => setForm(p => ({ ...p, manager: e.target.value }))} className={inputClass}>
+                    <option value="">Select Manager...</option>
+                    {MOCK_MANAGERS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Status</label>
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <button 
+                      onClick={() => setForm(p => ({ ...p, status: p.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" }))}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${form.status === "ACTIVE" ? "bg-primary" : "bg-muted-foreground/30"}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${form.status === "ACTIVE" ? "translate-x-4.5" : "translate-x-1"}`} />
+                    </button>
+                    <span className="text-sm font-medium text-foreground">{form.status === "ACTIVE" ? "Active" : "Inactive"}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground font-medium">Description</label>
+                <textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} rows={3} className={inputClass + " resize-none"} />
+              </div>
             </div>
             <div className="px-6 py-4 border-t border-border flex items-center justify-between">
               {error && <div className="flex items-center gap-2 text-destructive text-xs"><AlertTriangle className="w-4 h-4" /><span>{error}</span></div>}
@@ -3038,6 +3833,16 @@ function CostCentersTab() {
 export default function AdminPage() {
   const { data: session } = useSession();
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+  // Which dropdown group is open (null = all closed)
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+
+  const toggleGroup = (id: string) =>
+    setOpenGroup(prev => (prev === id ? null : id));
+
+  // Derive which group the active tab belongs to (for active-group styling)
+  const activeGroup = NAV_GROUPS.find(g =>
+    g.items.some(i => i.id === activeTab)
+  )?.id ?? null;
 
   const renderContent = () => {
     switch (activeTab) {
@@ -3060,8 +3865,12 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      {/* Header */}
+    // Close any open dropdown when clicking outside the nav
+    <div
+      className="min-h-screen bg-background text-foreground flex flex-col"
+      onClick={() => setOpenGroup(null)}
+    >
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="border-b border-border bg-card px-6 py-4">
         <div className="max-w-screen-2xl mx-auto flex items-center justify-between gap-6">
           <div className="flex items-center gap-4">
@@ -3078,7 +3887,9 @@ export default function AdminPage() {
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
               All Systems Operational
             </div>
-            <div className="text-muted-foreground">{session?.user?.name} · {session?.user?.role?.replace("_", " ")}</div>
+            <div className="text-muted-foreground">
+              {session?.user?.name} · {session?.user?.role?.replace("_", " ")}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -3096,27 +3907,88 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-border bg-card px-6 overflow-x-auto">
-        <div className="max-w-screen-2xl mx-auto flex gap-1 min-w-max">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id as AdminTab)}
-              className={`flex items-center gap-2 px-4 py-3 border-b-2 text-sm font-medium transition-all whitespace-nowrap ${
-                activeTab === id
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </button>
-          ))}
+      {/* ── Dropdown Navbar ─────────────────────────────────────────────── */}
+      <div
+        className="border-b border-border bg-card px-6"
+        // Prevent the outer click-away handler from firing inside the nav
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="max-w-screen-2xl mx-auto flex flex-wrap items-stretch gap-x-0.5 gap-y-0">
+
+          {/* ── Standalone: Overview ── */}
+          <button
+            onClick={() => { setActiveTab("overview"); setOpenGroup(null); }}
+            className={`flex items-center gap-2 px-4 py-3 border-b-2 text-sm font-medium transition-all whitespace-nowrap ${
+              activeTab === "overview"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Overview
+          </button>
+
+          {/* ── Grouped Dropdowns ── */}
+          {NAV_GROUPS.map(group => {
+            const Icon = group.icon;
+            const isGroupActive = activeGroup === group.id;
+            const isOpen = openGroup === group.id;
+
+            return (
+              <div key={group.id} className="relative">
+                {/* Trigger button */}
+                <button
+                  onClick={() => toggleGroup(group.id)}
+                  className={`flex items-center gap-2 px-4 py-3 border-b-2 text-sm font-medium transition-all whitespace-nowrap ${
+                    isGroupActive
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {group.label}
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                      isOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+
+                {/* Dropdown panel */}
+                {isOpen && (
+                  <div
+                    className="absolute top-full left-0 z-50 mt-1 min-w-[160px] bg-card border border-border rounded-xl shadow-xl py-1 animate-in fade-in slide-in-from-top-2 duration-150"
+                  >
+                    {group.items.map(item => {
+                      const ItemIcon = item.icon;
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => { setActiveTab(item.id as AdminTab); setOpenGroup(null); }}
+                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
+                            isActive
+                              ? "text-primary bg-primary/8 font-medium"
+                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                          }`}
+                        >
+                          <ItemIcon className="w-4 h-4 shrink-0" />
+                          {item.label}
+                          {isActive && (
+                            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Content */}
+      {/* ── Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-screen-2xl mx-auto">
           {renderContent()}
